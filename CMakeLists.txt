@@ -20,3 +20,4 @@ find_package(glm 0.9.9 REQUIRED)
 
 target_include_directories(vulkan PUBLIC ${Vulkan_INCLUDE_DIRS} ${GLM_INCLUDE_DIRS})
 target_link_libraries(vulkan PRIVATE ${Vulkan_LIBRARIES} glfw)
+target_compile_definitions(vulkan PRIVATE GLFW_INCLUDE_VULKAN)
