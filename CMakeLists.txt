@@ -8,7 +8,13 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 file(GLOB SRC_FILES src/*.cpp)
 add_executable(vulkan ${SRC_FILES})
 
-set_property(TARGET vulkan PROPERTY CXX_STANDARD 17)
+# https://stackoverflow.com/questions/2368811/how-to-set-warning-level-in-cmake
+if(MSVC)
+  target_compile_options(vulkan PRIVATE /W4 /WX)
+else()
+  target_compile_options(vulkan PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+set_property(TARGET vulkan PROPERTY CXX_STANDARD 20)
 
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
