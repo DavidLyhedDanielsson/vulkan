@@ -29,10 +29,23 @@ void visitValidationLayers(std::function<void(VkLayerProperties)> visitor)
     // way to specify an offset into vkEnumerate
     std::vector<VkLayerProperties> layers(writtenProperties);
     auto res = vkEnumerateInstanceLayerProperties(&writtenProperties, layers.data());
-    assert(res == VK_SUCCESS || res == VK_INCOMPLETE);
+    assert(res == VK_SUCCESS);
 
     for(uint32_t i = 0; i < writtenProperties; ++i)
         visitor(layers[i]);
+}
+
+void visitDevices(VkInstance instance, std::function<void(VkPhysicalDevice)> visitor)
+{
+    uint32_t count = 0;
+    vkEnumeratePhysicalDevices(instance, &count, nullptr);
+
+    std::vector<VkPhysicalDevice> devices(count);
+    auto res = vkEnumeratePhysicalDevices(instance, &count, devices.data());
+    assert(res == VK_SUCCESS);
+
+    for(uint32_t i = 0; i < count; ++i)
+        visitor(devices[i]);
 }
 
 std::vector<const char*> getRequiredExtensions()
@@ -89,7 +102,7 @@ std::optional<Vulkan> Vulkan::createVulkan()
         map(requiredLayers, [](const Layer& layer) { return layer.name; });
     std::vector<const char*> requiredExtensions = getRequiredExtensions();
 
-    VkInstanceCreateInfo createInfo = {
+    VkInstanceCreateInfo instanceCreateInfo = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
@@ -101,10 +114,64 @@ std::optional<Vulkan> Vulkan::createVulkan()
     };
 
     VkInstance instance;
-    auto retVal = vkCreateInstance(&createInfo, nullptr, &instance);
+    auto retVal = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
     if(retVal == VK_SUCCESS)
     {
-        VkDebugUtilsMessengerCreateInfoEXT createInfo = {
+        VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+        visitDevices(instance, [&physicalDevice](VkPhysicalDevice foundDevice) {
+            VkPhysicalDeviceProperties properties;
+            vkGetPhysicalDeviceProperties(foundDevice, &properties);
+            if(properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+                physicalDevice = foundDevice;
+        });
+        assert(physicalDevice != VK_NULL_HANDLE);
+
+        uint32_t queueFamilyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
+        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(
+            physicalDevice,
+            &queueFamilyCount,
+            queueFamilies.data());
+
+        // I doubt there'll be 9999 queue families
+        uint32_t familyIndex = 9999;
+        for(auto [family, index] : Index(queueFamilies))
+        {
+            if(family.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            {
+                familyIndex = index;
+            }
+        }
+        assert(familyIndex != 9999);
+
+        float queuePriority = 1.0f;
+        VkDeviceQueueCreateInfo queueInfo = {
+            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .queueFamilyIndex = familyIndex,
+            .queueCount = 1,
+            .pQueuePriorities = &queuePriority,
+        };
+
+        VkDeviceCreateInfo deviceCreateInfo = {
+            .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .queueCreateInfoCount = 1,
+            .pQueueCreateInfos = &queueInfo,
+            .enabledLayerCount = requiredLayerNames.size(),
+            .ppEnabledLayerNames = requiredLayerNames.data(),
+            .enabledExtensionCount = 0,
+            .ppEnabledExtensionNames = nullptr,
+            .pEnabledFeatures = nullptr,
+        };
+
+        VkDevice device;
+        assert(vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device) == VK_SUCCESS);
+
+        VkDebugUtilsMessengerCreateInfoEXT msgCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
             .pNext = nullptr,
             .flags = 0,
@@ -118,11 +185,11 @@ std::optional<Vulkan> Vulkan::createVulkan()
             .pUserData = nullptr,
         };
 
-        Vulkan vulkan(instance);
+        Vulkan vulkan(instance, device);
 
         auto f = vkGetInstanceProcAddrQ(instance, vkCreateDebugUtilsMessengerEXT);
         assert(f);
-        assert(f(instance, &createInfo, nullptr, &(vulkan.msg)) == VK_SUCCESS);
+        assert(f(instance, &msgCreateInfo, nullptr, &(vulkan.msg)) == VK_SUCCESS);
 
         return vulkan;
     }
@@ -132,8 +199,9 @@ std::optional<Vulkan> Vulkan::createVulkan()
     }
 }
 
-Vulkan::Vulkan(VkInstance instance)
+Vulkan::Vulkan(VkInstance instance, VkDevice device)
     : instance(instance, [](VkInstance_T* instance) { vkDestroyInstance(instance, nullptr); })
+    , device(device, [](VkDevice_T* device) { vkDestroyDevice(device, nullptr); })
 {
 }
 
