@@ -1,5 +1,5 @@
 #include "window.h"
-#include <assert.h>
+#include <cassert>
 
 std::optional<Window> Window::createWindow(int width, int height, const char* name)
 {
