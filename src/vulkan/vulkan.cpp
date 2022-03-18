@@ -3,9 +3,10 @@
 #include <array>
 #include <vector>
 
-#include "vulkan_builder.h"
+#include "../stl_utils.h"
 
-#include "stl_utils.h"
+#include "device_builder.h"
+#include "instance_builder.h"
 
 #define vkGetInstanceProcAddrQ(instance, func) (PFN_##func) vkGetInstanceProcAddr(instance, #func)
 

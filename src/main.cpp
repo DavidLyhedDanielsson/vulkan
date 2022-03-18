@@ -1,7 +1,7 @@
 #include <cassert>
 #include <iostream>
 
-#include "vulkan.h"
+#include "vulkan/vulkan.h"
 #include "window.h"
 
 int main()
