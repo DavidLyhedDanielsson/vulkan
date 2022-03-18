@@ -32,8 +32,26 @@ DeviceBuilder::BuildType DeviceBuilder::build()
             vkGetPhysicalDeviceProperties(devices[i], &deviceInfo.properties);
             vkGetPhysicalDeviceFeatures(devices[i], &deviceInfo.features);
 
-            if(deviceSelector(deviceOpt, deviceInfo))
-                deviceOpt = deviceInfo;
+            if(deviceSelector)
+            {
+                if(deviceSelector(deviceOpt, deviceInfo))
+                    deviceOpt = deviceInfo;
+            }
+            else
+            {
+                // Default selector selects any discrete GPU over any integrated GPU
+                bool hasDiscrete = deviceOpt.has_value()
+                                   && deviceOpt.value().properties.deviceType
+                                          == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+
+                if(!hasDiscrete
+                   && (deviceInfo.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+                       || deviceInfo.properties.deviceType
+                              == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU))
+                {
+                    deviceOpt = deviceInfo;
+                }
+            }
         }
     }
 
@@ -50,8 +68,18 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         for(auto [prop, index] : Index(queueFamilies))
         {
             QueueFamilyInfo info = {.index = (uint32_t)index, .properties = prop};
-            if(queueFamilySelector(this->queueFamilyPropertiesOpt, info))
-                this->queueFamilyPropertiesOpt = info;
+
+            if(queueFamilySelector)
+            {
+                if(queueFamilySelector(this->queueFamilyPropertiesOpt, info))
+                    this->queueFamilyPropertiesOpt = info;
+            }
+            else
+            {
+                // Default selector selects the first one with VK_QUEUE_GRAPHICS_BIT
+                if(!queueFamilyPropertiesOpt.has_value() && prop.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+                    this->queueFamilyPropertiesOpt = info;
+            }
         }
     }
 
