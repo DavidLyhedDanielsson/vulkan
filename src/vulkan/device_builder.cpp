@@ -2,7 +2,11 @@
 
 #include "../stl_utils.h"
 
-DeviceBuilder::DeviceBuilder(const VkInstance instance): instance(instance) {}
+DeviceBuilder::DeviceBuilder(const VkInstance instance, const VkSurfaceKHR surface)
+    : instance(instance)
+    , surface(surface)
+{
+}
 
 DeviceBuilder& DeviceBuilder::selectDevice(DeviceSelector selector)
 {
@@ -38,9 +42,19 @@ DeviceBuilder::BuildType DeviceBuilder::build()
             PhysicalDeviceInfo deviceInfo = {
                 .device = devices[i],
                 .properties = {},
-                .features = {}};
+                .features = {},
+                .queueFamilyProperties = {},
+            };
             vkGetPhysicalDeviceProperties(devices[i], &deviceInfo.properties);
             vkGetPhysicalDeviceFeatures(devices[i], &deviceInfo.features);
+
+            uint32_t queueFamilyCount = 0;
+            vkGetPhysicalDeviceQueueFamilyProperties(deviceInfo.device, &queueFamilyCount, nullptr);
+            deviceInfo.queueFamilyProperties.resize(queueFamilyCount);
+            vkGetPhysicalDeviceQueueFamilyProperties(
+                deviceInfo.device,
+                &queueFamilyCount,
+                deviceInfo.queueFamilyProperties.data());
 
             if(deviceSelector)
             {
@@ -49,15 +63,32 @@ DeviceBuilder::BuildType DeviceBuilder::build()
             }
             else
             {
-                // Default selector selects any discrete GPU over any integrated GPU
+                // Default selector selects any discrete GPU over any integrated GPU, but requires
+                // presentation support
                 bool hasDiscrete = deviceOpt.has_value()
                                    && deviceOpt.value().properties.deviceType
                                           == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
+                VkBool32 supportPresent = false;
+                for(auto [queueFamilyInfo, index] : Index(deviceInfo.queueFamilyProperties))
+                {
+                    auto res = vkGetPhysicalDeviceSurfaceSupportKHR(
+                        deviceInfo.device,
+                        index,
+                        surface,
+                        &supportPresent);
+
+                    // TODO
+                    assert(res == VK_SUCCESS);
+                    if(supportPresent)
+                        break;
+                }
+
                 if(!hasDiscrete
                    && (deviceInfo.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
                        || deviceInfo.properties.deviceType
-                              == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU))
+                              == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
+                   && supportPresent)
                 {
                     deviceOpt = deviceInfo;
                 }
@@ -70,31 +101,36 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         error.type = ErrorType::NoPhysicalDeviceFound;
         return error;
     }
-    auto physicalDeviceInfo = deviceOpt.value();
+    PhysicalDeviceInfo physicalDeviceInfo = deviceOpt.value();
 
+    for(auto [prop, index] : Index(physicalDeviceInfo.queueFamilyProperties))
     {
-        uint32_t count = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDeviceInfo.device, &count, nullptr);
-        std::vector<VkQueueFamilyProperties> queueFamilies(count);
-        vkGetPhysicalDeviceQueueFamilyProperties(
-            physicalDeviceInfo.device,
-            &count,
-            queueFamilies.data());
+        QueueFamilyInfo info = {.index = (uint32_t)index, .properties = prop};
 
-        for(auto [prop, index] : Index(queueFamilies))
+        if(queueFamilySelector)
         {
-            QueueFamilyInfo info = {.index = (uint32_t)index, .properties = prop};
+            if(queueFamilySelector(this->queueFamilyPropertiesOpt, info))
+                this->queueFamilyPropertiesOpt = info;
+        }
+        else
+        {
+            // Default selector selects the first one with VK_QUEUE_GRAPHICS_BIT and presentation
+            // support
+            if(!queueFamilyPropertiesOpt.has_value() && prop.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            {
+                VkBool32 supportPresent = false;
+                auto res = vkGetPhysicalDeviceSurfaceSupportKHR(
+                    physicalDeviceInfo.device,
+                    index,
+                    surface,
+                    &supportPresent);
 
-            if(queueFamilySelector)
-            {
-                if(queueFamilySelector(this->queueFamilyPropertiesOpt, info))
-                    this->queueFamilyPropertiesOpt = info;
-            }
-            else
-            {
-                // Default selector selects the first one with VK_QUEUE_GRAPHICS_BIT
-                if(!queueFamilyPropertiesOpt.has_value() && prop.queueFlags & VK_QUEUE_GRAPHICS_BIT)
-                    this->queueFamilyPropertiesOpt = info;
+                // TODO
+                assert(res == VK_SUCCESS);
+                if(!supportPresent)
+                    continue;
+
+                this->queueFamilyPropertiesOpt = info;
             }
         }
     }

@@ -11,6 +11,7 @@ struct PhysicalDeviceInfo
     VkPhysicalDevice device;
     VkPhysicalDeviceProperties properties;
     VkPhysicalDeviceFeatures features;
+    std::vector<VkQueueFamilyProperties> queueFamilyProperties;
 };
 
 struct QueueFamilyInfo
@@ -60,7 +61,7 @@ class DeviceBuilder
         std::function<bool(const std::optional<QueueFamilyInfo>&, const QueueFamilyInfo&)>;
     using BuildType = std::variant<Data, Error>;
 
-    DeviceBuilder(const VkInstance instance);
+    DeviceBuilder(const VkInstance instance, const VkSurfaceKHR surface);
     DeviceBuilder& selectDevice(DeviceSelector selector);
     DeviceBuilder& selectQueueFamily(QueueFamilySelector selector);
 
@@ -68,6 +69,7 @@ class DeviceBuilder
 
   private:
     const VkInstance instance;
+    const VkSurfaceKHR surface;
 
     std::function<bool(const std::optional<PhysicalDeviceInfo>&, const PhysicalDeviceInfo&)>
         deviceSelector;

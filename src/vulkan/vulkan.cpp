@@ -1,5 +1,6 @@
-#include "vulkan.h"
 #include <GLFW/glfw3.h>
+
+#include "vulkan.h"
 #include <array>
 #include <vector>
 
@@ -10,7 +11,7 @@
 
 #define vkGetInstanceProcAddrQ(instance, func) (PFN_##func) vkGetInstanceProcAddr(instance, #func)
 
-Vulkan::CreateType Vulkan::createVulkan()
+Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
 {
     Error error = {};
 
@@ -35,25 +36,17 @@ Vulkan::CreateType Vulkan::createVulkan()
     }
     auto instance = std::get<VkInstance>(instanceVar);
 
-    auto deviceVar =
-        DeviceBuilder(instance)
-            .selectDevice([](auto current, auto potential) {
-                // Select any GPU but prioritize discrete GPUs
-                // clang-format creates some serious stairs here :(
-                bool hasDiscrete = current.has_value()
-                                   && current.value().properties.deviceType
-                                          == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    VkSurfaceKHR surface;
+    auto res = glfwCreateWindowSurface(instance, windowHandle, nullptr, &surface);
+    if(res != VK_SUCCESS)
+    {
+        error.type = ErrorType::Unsupported;
+        error.Unsupported.message = "Can't create surface";
+        return error;
+    }
 
-                return !hasDiscrete
-                       && (potential.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
-                           || potential.properties.deviceType
-                                  == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
-            })
-            .selectQueueFamily([](auto current, auto potential) {
-                return !current.has_value()
-                       && potential.properties.queueFlags & VK_QUEUE_GRAPHICS_BIT;
-            })
-            .build();
+    // Defaults are fine for now
+    auto deviceVar = DeviceBuilder(instance, surface).build();
 
     if(std::holds_alternative<DeviceBuilder::Error>(deviceVar))
     {
@@ -63,8 +56,8 @@ Vulkan::CreateType Vulkan::createVulkan()
     }
     auto deviceInfo = std::get<DeviceBuilder::Data>(deviceVar);
 
-    VkQueue graphicsQueue;
-    vkGetDeviceQueue(deviceInfo.device, deviceInfo.queueFamilyProperties.index, 0, &graphicsQueue);
+    VkQueue workQueue;
+    vkGetDeviceQueue(deviceInfo.device, deviceInfo.queueFamilyProperties.index, 0, &workQueue);
 
     VkDebugUtilsMessengerCreateInfoEXT msgCreateInfo = {
         .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
@@ -80,7 +73,7 @@ Vulkan::CreateType Vulkan::createVulkan()
         .pUserData = nullptr,
     };
 
-    Vulkan vulkan(instance, deviceInfo.device, graphicsQueue);
+    Vulkan vulkan(instance, deviceInfo.device, workQueue, surface);
 
     auto createDebugUtilsMessenger =
         vkGetInstanceProcAddrQ(instance, vkCreateDebugUtilsMessengerEXT);
@@ -90,7 +83,7 @@ Vulkan::CreateType Vulkan::createVulkan()
         error.InstanceProcAddrNotFound.instanceProc = "vkCreateDebugUtilsMessengerEXT";
         return error;
     }
-    auto res = createDebugUtilsMessenger(instance, &msgCreateInfo, nullptr, &(vulkan.msg));
+    res = createDebugUtilsMessenger(instance, &msgCreateInfo, nullptr, &(vulkan.msg));
     if(res != VK_SUCCESS)
     {
         error.type = ErrorType::InstanceProcAddrNotFound;
@@ -102,10 +95,13 @@ Vulkan::CreateType Vulkan::createVulkan()
     return vulkan;
 }
 
-Vulkan::Vulkan(VkInstance instance, VkDevice device, VkQueue graphicsQueue)
+Vulkan::Vulkan(VkInstance instance, VkDevice device, VkQueue workQueue, VkSurfaceKHR surface)
     : instance(instance, [](VkInstance_T* instance) { vkDestroyInstance(instance, nullptr); })
     , device(device, [](VkDevice_T* device) { vkDestroyDevice(device, nullptr); })
-    , graphicsQueue(graphicsQueue)
+    , workQueue(workQueue)
+    , surface(surface, [instance](VkSurfaceKHR_T* surface) {
+        vkDestroySurfaceKHR(instance, surface, nullptr);
+    })
 {
 }
 

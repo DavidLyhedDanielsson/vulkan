@@ -3,6 +3,8 @@
 #include <variant>
 #include <vulkan/vulkan.hpp>
 
+struct GLFWwindow;
+
 class Vulkan
 {
   public:
@@ -22,6 +24,10 @@ class Vulkan
         {
             struct
             {
+                const char* message;
+            } Unsupported;
+            struct
+            {
                 const char* instanceProc;
             } InstanceProcAddrNotFound;
             struct
@@ -33,7 +39,7 @@ class Vulkan
     };
 
     using CreateType = std::variant<Vulkan, Error>;
-    static CreateType createVulkan();
+    static CreateType createVulkan(GLFWwindow* windowHandle);
 
     ~Vulkan();
     Vulkan(Vulkan&&) = default;
@@ -57,11 +63,15 @@ class Vulkan
         void* pUserData);
 
     // Constructed through Vulkan::createVulkan
-    Vulkan(VkInstance instance, VkDevice device, VkQueue graphicsQueue);
+    Vulkan(VkInstance instance, VkDevice device, VkQueue workQueue, VkSurfaceKHR surface);
 
+    // Don't touch the order or deinitialization will not work as intended
     std::unique_ptr<VkInstance_T, void (*)(VkInstance_T*)> instance;
     std::unique_ptr<VkDevice_T, void (*)(VkDevice_T*)> device;
-    VkQueue graphicsQueue;
+    VkQueue workQueue;
+    // Destroying a surface requires the instance, so the lambda needs to capture `this` or
+    // `instance`; requiring std::function
+    std::unique_ptr<VkSurfaceKHR_T, std::function<void(VkSurfaceKHR_T*)>> surface;
 
     VkDebugUtilsMessengerEXT msg;
 };

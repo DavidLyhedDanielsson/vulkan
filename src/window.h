@@ -19,6 +19,8 @@ class Window
 
     bool shouldClose();
 
+    GLFWwindow* getWindowHandle();
+
   private:
     Window(GLFWwindow* window);
 
