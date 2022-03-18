@@ -1,17 +1,42 @@
 #pragma once
 
-#include <optional>
+#include <variant>
 #include <vulkan/vulkan.hpp>
 
 class Vulkan
 {
-    friend std::optional<Vulkan> createVulkan();
-
   public:
+    enum class ErrorType
+    {
+        HardwareError,
+        ConfigError,
+        Unsupported,
+        InstanceProcAddrNotFound,
+        InstanceProcAddrError,
+    };
+
+    struct Error
+    {
+        ErrorType type;
+        union
+        {
+            struct
+            {
+                const char* instanceProc;
+            } InstanceProcAddrNotFound;
+            struct
+            {
+                const char* instanceProc;
+                VkResult result;
+            } InstanceProcAddrError;
+        };
+    };
+
+    using CreateType = std::variant<Vulkan, Error>;
+    static CreateType createVulkan();
+
     ~Vulkan();
     Vulkan(Vulkan&&) = default;
-
-    static std::optional<Vulkan> createVulkan();
 
   private:
     // Placed here for reference

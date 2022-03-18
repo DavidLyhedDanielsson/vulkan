@@ -9,7 +9,7 @@ struct ValidatedLayer
     bool found;
 };
 
-void visitValidationLayers(std::function<void(VkLayerProperties)> visitor)
+VkResult visitValidationLayers(std::function<void(VkLayerProperties)> visitor)
 {
     uint32_t writtenProperties = 0;
     vkEnumerateInstanceLayerProperties(&writtenProperties, nullptr);
@@ -18,19 +18,22 @@ void visitValidationLayers(std::function<void(VkLayerProperties)> visitor)
     // way to specify an offset into vkEnumerate
     std::vector<VkLayerProperties> layers(writtenProperties);
     auto res = vkEnumerateInstanceLayerProperties(&writtenProperties, layers.data());
-    assert(res == VK_SUCCESS);
+    if(res != VK_SUCCESS)
+        return res;
 
     for(uint32_t i = 0; i < writtenProperties; ++i)
         visitor(layers[i]);
+
+    return VK_SUCCESS;
 }
 
-std::vector<ValidatedLayer> validateLayers(const std::vector<Layer>& layers)
+std::variant<std::vector<ValidatedLayer>, VkResult> validateLayers(const std::vector<Layer>& layers)
 {
     std::vector<ValidatedLayer> validatedLayers = map(layers, [](const Layer& layer) {
         return ValidatedLayer{.name = layer.name, .required = layer.required, .found = false};
     });
 
-    visitValidationLayers([&validatedLayers, layers](VkLayerProperties prop) {
+    auto result = visitValidationLayers([&validatedLayers, layers](VkLayerProperties prop) {
         for(auto [layer, index] : Index(layers))
         {
             if(std::strcmp(layer.name, prop.layerName) == 0)
@@ -41,7 +44,10 @@ std::vector<ValidatedLayer> validateLayers(const std::vector<Layer>& layers)
         }
     });
 
-    return validatedLayers;
+    if(result != VK_SUCCESS)
+        return {result};
+    else
+        return {validatedLayers};
 }
 
 InstanceBuilder::InstanceBuilder()
@@ -118,11 +124,28 @@ InstanceBuilder& InstanceBuilder::withDebugExtension()
 
 InstanceBuilder::BuildType InstanceBuilder::build()
 {
-    for(const ValidatedLayer& layer : validateLayers(layers))
+    // Some errors require multiple iterations in loops and such, so declare it here
+    Error error = {};
+
+    auto validatedLayersVar = validateLayers(layers);
+    if(std::holds_alternative<VkResult>(validatedLayersVar))
+    {
+        error.type = ErrorType::EnumerateInstanceLayerProperties;
+        error.EnumerateInstanceLayerProperties.result = std::get<VkResult>(validatedLayersVar);
+        return error;
+    };
+
+    auto validatedLayers = std::get<std::vector<ValidatedLayer>>(validatedLayersVar);
+    for(const ValidatedLayer& layer : validatedLayers)
     {
         if(layer.required && !layer.found)
-            return BuildType(InstanceError{});
+        {
+            error.type = ErrorType::RequiredLayerMissing;
+            error.RequiredLayerMissing.layers[error.RequiredLayerMissing.count++] = layer.name;
+        }
     }
+    if(error.type != ErrorType::None)
+        return BuildType(error);
 
     std::vector<const char*> layerNames =
         map(layers, [](const Layer& layer) { return layer.name; });
@@ -139,9 +162,13 @@ InstanceBuilder::BuildType InstanceBuilder::build()
     };
 
     VkInstance instance;
-    auto retVal = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
-    if(retVal == VK_SUCCESS)
+    auto res = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
+    if(res == VK_SUCCESS)
         return BuildType(instance);
     else
-        return BuildType(InstanceError{});
+    {
+        error.type = ErrorType::InstanceCreationError;
+        error.InstanceCreationError.result = res;
+        return BuildType(error);
+    }
 }

@@ -6,11 +6,6 @@
 #include <optional>
 #include <variant>
 
-struct DeviceError
-{
-    // TODO: Fill with error info
-};
-
 struct DeviceInfo
 {
     VkPhysicalDevice device;
@@ -27,10 +22,35 @@ struct QueueFamilyInfo
 class DeviceBuilder
 {
   public:
+    enum class ErrorType
+    {
+        None = 0,
+        EnumeratePhysicalDevices,
+        NoPhysicalDeviceFound,
+        NoQueueFamilyFound,
+        DeviceCreationError,
+    };
+
+    struct Error
+    {
+        ErrorType type;
+        union
+        {
+            struct
+            {
+                VkResult result;
+            } EnumeratePhysicalDevices;
+            struct
+            {
+                VkResult result;
+            } DeviceCreationError;
+        };
+    };
+
     using DeviceSelector = std::function<bool(const std::optional<DeviceInfo>&, const DeviceInfo&)>;
     using QueueFamilySelector =
         std::function<bool(const std::optional<QueueFamilyInfo>&, const QueueFamilyInfo&)>;
-    using BuildType = std::variant<VkDevice, DeviceError>;
+    using BuildType = std::variant<VkDevice, Error>;
 
     DeviceBuilder(const VkInstance instance);
     DeviceBuilder& selectDevice(DeviceSelector selector);

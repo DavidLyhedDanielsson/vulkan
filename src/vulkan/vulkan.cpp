@@ -10,19 +10,32 @@
 
 #define vkGetInstanceProcAddrQ(instance, func) (PFN_##func) vkGetInstanceProcAddr(instance, #func)
 
-std::optional<Vulkan> Vulkan::createVulkan()
+Vulkan::CreateType Vulkan::createVulkan()
 {
+    Error error = {};
+
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-    auto instance =
-        std::get<VkInstance>(InstanceBuilder()
-                                 .withValidationLayer()
-                                 .withDebugExtension()
-                                 .withRequiredExtensions(glfwExtensions, glfwExtensionCount)
-                                 .build());
+    auto instanceVar = InstanceBuilder()
+                           .withValidationLayer()
+                           .withDebugExtension()
+                           .withRequiredExtensions(glfwExtensions, glfwExtensionCount)
+                           .build();
 
-    auto physicalDevice = std::get<VkDevice>(
+    if(std::holds_alternative<InstanceBuilder::Error>(instanceVar))
+    {
+        // TODO: Log error; there is no possibility of user error here (yet)
+        auto err = std::get<InstanceBuilder::Error>(instanceVar);
+        if(err.type == InstanceBuilder::ErrorType::RequiredLayerMissing)
+            error.type = ErrorType::ConfigError;
+        else
+            error.type = ErrorType::HardwareError;
+        return error;
+    }
+    auto instance = std::get<VkInstance>(instanceVar);
+
+    auto deviceVar =
         DeviceBuilder(instance)
             .selectDevice([](auto current, auto potential) {
                 // Select any GPU but prioritize discrete GPUs
@@ -40,7 +53,15 @@ std::optional<Vulkan> Vulkan::createVulkan()
                 return !current.has_value()
                        && potential.properties.queueFlags & VK_QUEUE_GRAPHICS_BIT;
             })
-            .build());
+            .build();
+
+    if(std::holds_alternative<DeviceBuilder::Error>(deviceVar))
+    {
+        // TODO: Log error; there is no possibility of user error here (yet)
+        error.type = ErrorType::HardwareError;
+        return error;
+    }
+    auto device = std::get<VkDevice>(deviceVar);
 
     VkDebugUtilsMessengerCreateInfoEXT msgCreateInfo = {
         .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
@@ -56,11 +77,24 @@ std::optional<Vulkan> Vulkan::createVulkan()
         .pUserData = nullptr,
     };
 
-    Vulkan vulkan(instance, physicalDevice);
+    Vulkan vulkan(instance, device);
 
-    auto f = vkGetInstanceProcAddrQ(instance, vkCreateDebugUtilsMessengerEXT);
-    assert(f);
-    assert(f(instance, &msgCreateInfo, nullptr, &(vulkan.msg)) == VK_SUCCESS);
+    auto createDebugUtilsMessenger =
+        vkGetInstanceProcAddrQ(instance, vkCreateDebugUtilsMessengerEXT);
+    if(!createDebugUtilsMessenger)
+    {
+        error.type = ErrorType::InstanceProcAddrNotFound;
+        error.InstanceProcAddrNotFound.instanceProc = "vkCreateDebugUtilsMessengerEXT";
+        return error;
+    }
+    auto res = createDebugUtilsMessenger(instance, &msgCreateInfo, nullptr, &(vulkan.msg));
+    if(res != VK_SUCCESS)
+    {
+        error.type = ErrorType::InstanceProcAddrNotFound;
+        error.InstanceProcAddrError.instanceProc = "vkCreateDebugUtilsMessengerEXT";
+        error.InstanceProcAddrError.result = res;
+        return error;
+    }
 
     return vulkan;
 }

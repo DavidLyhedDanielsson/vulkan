@@ -10,11 +10,12 @@ int main()
 
     auto mainWindowOpt = Window::createWindow(800, 600, "Vulkan window");
     assert(mainWindowOpt.has_value());
-    auto vulkanOpt = Vulkan::createVulkan();
-    assert(vulkanOpt.has_value());
+
+    auto vulkanVar = Vulkan::createVulkan();
+    assert(!std::holds_alternative<Vulkan::Error>(vulkanVar));
+    auto vulkan = std::get<Vulkan>(std::move(vulkanVar));
 
     auto mainWindow = std::move(mainWindowOpt.value());
-    auto vulkan = std::move(vulkanOpt.value());
     while(!mainWindow.shouldClose())
     {
         mainWindow.pollEvents();

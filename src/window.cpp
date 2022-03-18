@@ -19,14 +19,10 @@ void Window::createWindow() {}
 
 void Window::pollEvents()
 {
-    assert(window.get());
-
     glfwPollEvents();
 }
 
 bool Window::shouldClose()
 {
-    assert(window.get());
-
     return glfwWindowShouldClose(window.get());
 }

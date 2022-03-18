@@ -18,13 +18,20 @@ DeviceBuilder& DeviceBuilder::selectQueueFamily(QueueFamilySelector selector)
 
 DeviceBuilder::BuildType DeviceBuilder::build()
 {
+    Error error = {};
+
     {
         uint32_t count = 0;
         vkEnumeratePhysicalDevices(instance, &count, nullptr);
 
         std::vector<VkPhysicalDevice> devices(count);
         auto res = vkEnumeratePhysicalDevices(instance, &count, devices.data());
-        assert(res == VK_SUCCESS);
+        if(res != VK_SUCCESS)
+        {
+            error.type = ErrorType::EnumeratePhysicalDevices;
+            error.EnumeratePhysicalDevices.result = res;
+            return error;
+        }
 
         for(uint32_t i = 0; i < count; ++i)
         {
@@ -56,8 +63,12 @@ DeviceBuilder::BuildType DeviceBuilder::build()
     }
 
     if(!deviceOpt.has_value())
-        return BuildType(DeviceError{});
-    auto physicalDevice = deviceOpt.value().device;
+    {
+        error.type = ErrorType::NoPhysicalDeviceFound;
+        return error;
+    }
+
+    VkPhysicalDevice physicalDevice = deviceOpt.value().device;
 
     {
         uint32_t count = 0;
@@ -84,8 +95,12 @@ DeviceBuilder::BuildType DeviceBuilder::build()
     }
 
     if(!queueFamilyPropertiesOpt.has_value())
-        return BuildType(DeviceError{});
-    auto queueFamilyIndex = queueFamilyPropertiesOpt.value().index;
+    {
+        error.type = ErrorType::NoQueueFamilyFound;
+        return error;
+    }
+
+    uint32_t queueFamilyIndex = queueFamilyPropertiesOpt.value().index;
 
     float queuePriority = 1.0f;
     VkDeviceQueueCreateInfo queueInfo = {
@@ -113,7 +128,11 @@ DeviceBuilder::BuildType DeviceBuilder::build()
     VkDevice device;
     auto res = vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device);
     if(res == VK_SUCCESS)
-        return BuildType(device);
+        return device;
     else
-        return BuildType(DeviceError{});
+    {
+        error.type = ErrorType::DeviceCreationError;
+        error.DeviceCreationError.result = res;
+        return error;
+    }
 }

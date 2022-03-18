@@ -13,15 +13,39 @@ struct Layer
     bool required;
 };
 
-struct InstanceError
-{
-    // TODO: Fill with error info
-};
-
 class InstanceBuilder
 {
   public:
-    using BuildType = std::variant<VkInstance, InstanceError>;
+    enum class ErrorType
+    {
+        None = 0,
+        RequiredLayerMissing,
+        InstanceCreationError,
+        EnumerateInstanceLayerProperties,
+    };
+
+    struct Error
+    {
+        ErrorType type;
+        union
+        {
+            struct
+            {
+                const char* layers[16];
+                uint32_t count;
+            } RequiredLayerMissing;
+            struct
+            {
+                VkResult result;
+            } InstanceCreationError;
+            struct
+            {
+                VkResult result;
+            } EnumerateInstanceLayerProperties;
+        };
+    };
+
+    using BuildType = std::variant<VkInstance, Error>;
 
     InstanceBuilder();
     InstanceBuilder& withApplicationVersion(
