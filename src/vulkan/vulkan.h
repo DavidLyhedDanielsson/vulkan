@@ -57,9 +57,11 @@ class Vulkan
         void* pUserData);
 
     // Constructed through Vulkan::createVulkan
-    Vulkan(VkInstance instance, VkDevice device);
+    Vulkan(VkInstance instance, VkDevice device, VkQueue graphicsQueue);
 
     std::unique_ptr<VkInstance_T, void (*)(VkInstance_T*)> instance;
     std::unique_ptr<VkDevice_T, void (*)(VkDevice_T*)> device;
+    VkQueue graphicsQueue;
+
     VkDebugUtilsMessengerEXT msg;
 };

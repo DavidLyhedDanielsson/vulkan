@@ -35,7 +35,10 @@ DeviceBuilder::BuildType DeviceBuilder::build()
 
         for(uint32_t i = 0; i < count; ++i)
         {
-            DeviceInfo deviceInfo = {.device = devices[i], .properties = {}, .features = {}};
+            PhysicalDeviceInfo deviceInfo = {
+                .device = devices[i],
+                .properties = {},
+                .features = {}};
             vkGetPhysicalDeviceProperties(devices[i], &deviceInfo.properties);
             vkGetPhysicalDeviceFeatures(devices[i], &deviceInfo.features);
 
@@ -67,14 +70,16 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         error.type = ErrorType::NoPhysicalDeviceFound;
         return error;
     }
-
-    VkPhysicalDevice physicalDevice = deviceOpt.value().device;
+    auto physicalDeviceInfo = deviceOpt.value();
 
     {
         uint32_t count = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, nullptr);
+        vkGetPhysicalDeviceQueueFamilyProperties(physicalDeviceInfo.device, &count, nullptr);
         std::vector<VkQueueFamilyProperties> queueFamilies(count);
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, queueFamilies.data());
+        vkGetPhysicalDeviceQueueFamilyProperties(
+            physicalDeviceInfo.device,
+            &count,
+            queueFamilies.data());
 
         for(auto [prop, index] : Index(queueFamilies))
         {
@@ -100,14 +105,14 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         return error;
     }
 
-    uint32_t queueFamilyIndex = queueFamilyPropertiesOpt.value().index;
+    auto queueFamilyProperties = queueFamilyPropertiesOpt.value();
 
     float queuePriority = 1.0f;
     VkDeviceQueueCreateInfo queueInfo = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .queueFamilyIndex = queueFamilyIndex,
+        .queueFamilyIndex = queueFamilyProperties.index,
         .queueCount = 1,
         .pQueuePriorities = &queuePriority,
     };
@@ -126,9 +131,13 @@ DeviceBuilder::BuildType DeviceBuilder::build()
     };
 
     VkDevice device;
-    auto res = vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device);
+    auto res = vkCreateDevice(physicalDeviceInfo.device, &deviceCreateInfo, nullptr, &device);
     if(res == VK_SUCCESS)
-        return device;
+        return Data{
+            .device = device,
+            .physicalDeviceInfo = physicalDeviceInfo,
+            .queueFamilyProperties = queueFamilyProperties,
+        };
     else
     {
         error.type = ErrorType::DeviceCreationError;

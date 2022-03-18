@@ -61,7 +61,10 @@ Vulkan::CreateType Vulkan::createVulkan()
         error.type = ErrorType::HardwareError;
         return error;
     }
-    auto device = std::get<VkDevice>(deviceVar);
+    auto deviceInfo = std::get<DeviceBuilder::Data>(deviceVar);
+
+    VkQueue graphicsQueue;
+    vkGetDeviceQueue(deviceInfo.device, deviceInfo.queueFamilyProperties.index, 0, &graphicsQueue);
 
     VkDebugUtilsMessengerCreateInfoEXT msgCreateInfo = {
         .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
@@ -77,7 +80,7 @@ Vulkan::CreateType Vulkan::createVulkan()
         .pUserData = nullptr,
     };
 
-    Vulkan vulkan(instance, device);
+    Vulkan vulkan(instance, deviceInfo.device, graphicsQueue);
 
     auto createDebugUtilsMessenger =
         vkGetInstanceProcAddrQ(instance, vkCreateDebugUtilsMessengerEXT);
@@ -99,9 +102,10 @@ Vulkan::CreateType Vulkan::createVulkan()
     return vulkan;
 }
 
-Vulkan::Vulkan(VkInstance instance, VkDevice device)
+Vulkan::Vulkan(VkInstance instance, VkDevice device, VkQueue graphicsQueue)
     : instance(instance, [](VkInstance_T* instance) { vkDestroyInstance(instance, nullptr); })
     , device(device, [](VkDevice_T* device) { vkDestroyDevice(device, nullptr); })
+    , graphicsQueue(graphicsQueue)
 {
 }
 

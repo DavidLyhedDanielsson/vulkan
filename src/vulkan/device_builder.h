@@ -6,7 +6,7 @@
 #include <optional>
 #include <variant>
 
-struct DeviceInfo
+struct PhysicalDeviceInfo
 {
     VkPhysicalDevice device;
     VkPhysicalDeviceProperties properties;
@@ -47,10 +47,18 @@ class DeviceBuilder
         };
     };
 
-    using DeviceSelector = std::function<bool(const std::optional<DeviceInfo>&, const DeviceInfo&)>;
+    struct Data
+    {
+        VkDevice device;
+        PhysicalDeviceInfo physicalDeviceInfo;
+        QueueFamilyInfo queueFamilyProperties;
+    };
+
+    using DeviceSelector =
+        std::function<bool(const std::optional<PhysicalDeviceInfo>&, const PhysicalDeviceInfo&)>;
     using QueueFamilySelector =
         std::function<bool(const std::optional<QueueFamilyInfo>&, const QueueFamilyInfo&)>;
-    using BuildType = std::variant<VkDevice, Error>;
+    using BuildType = std::variant<Data, Error>;
 
     DeviceBuilder(const VkInstance instance);
     DeviceBuilder& selectDevice(DeviceSelector selector);
@@ -61,10 +69,11 @@ class DeviceBuilder
   private:
     const VkInstance instance;
 
-    std::function<bool(const std::optional<DeviceInfo>&, const DeviceInfo&)> deviceSelector;
+    std::function<bool(const std::optional<PhysicalDeviceInfo>&, const PhysicalDeviceInfo&)>
+        deviceSelector;
     std::function<bool(const std::optional<QueueFamilyInfo>&, const QueueFamilyInfo&)>
         queueFamilySelector;
 
-    std::optional<DeviceInfo> deviceOpt;
+    std::optional<PhysicalDeviceInfo> deviceOpt;
     std::optional<QueueFamilyInfo> queueFamilyPropertiesOpt;
 };
