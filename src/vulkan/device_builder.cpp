@@ -58,8 +58,15 @@ DeviceBuilder::BuildType DeviceBuilder::build()
 
             if(deviceSelector)
             {
-                if(deviceSelector(deviceOpt, deviceInfo))
-                    deviceOpt = deviceInfo;
+                auto resultVar = deviceSelector(deviceOpt, deviceInfo);
+                if(std::holds_alternative<VkResult>(resultVar))
+                {
+                    error.type = ErrorType::Fatal;
+                    error.Fatal.result = std::get<VkResult>(resultVar);
+                    error.Fatal.message = "Error during device selection";
+                    return error;
+                }
+                deviceOpt = deviceInfo;
             }
             else
             {
@@ -78,8 +85,13 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                         surface,
                         &supportPresent);
 
-                    // TODO
-                    assert(res == VK_SUCCESS);
+                    if(res != VK_SUCCESS)
+                    {
+                        error.type = ErrorType::Fatal;
+                        error.Fatal.result = res;
+                        error.Fatal.message = "Error during device selection";
+                        return error;
+                    }
                     if(supportPresent)
                         break;
                 }
@@ -109,8 +121,16 @@ DeviceBuilder::BuildType DeviceBuilder::build()
 
         if(queueFamilySelector)
         {
-            if(queueFamilySelector(this->queueFamilyPropertiesOpt, info))
-                this->queueFamilyPropertiesOpt = info;
+            auto resultVar = queueFamilySelector(this->queueFamilyPropertiesOpt, info);
+            if(std::holds_alternative<VkResult>(resultVar))
+            {
+                error.type = ErrorType::Fatal;
+                error.Fatal.result = std::get<VkResult>(resultVar);
+                error.Fatal.message = "Error during device selection";
+                return error;
+            }
+
+            this->queueFamilyPropertiesOpt = info;
         }
         else
         {
@@ -125,8 +145,14 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                     surface,
                     &supportPresent);
 
-                // TODO
-                assert(res == VK_SUCCESS);
+                if(res != VK_SUCCESS)
+                {
+                    error.type = ErrorType::Fatal;
+                    error.Fatal.result = res;
+                    error.Fatal.message = "Error during queue family selection";
+                    return error;
+                }
+
                 if(!supportPresent)
                     continue;
 

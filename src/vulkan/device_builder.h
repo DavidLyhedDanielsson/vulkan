@@ -30,6 +30,7 @@ class DeviceBuilder
         NoPhysicalDeviceFound,
         NoQueueFamilyFound,
         DeviceCreationError,
+        Fatal, // Something unspecified happened but we can't continue
     };
 
     struct Error
@@ -45,6 +46,11 @@ class DeviceBuilder
             {
                 VkResult result;
             } DeviceCreationError;
+            struct
+            {
+                VkResult result;
+                const char* message;
+            } Fatal;
         };
     };
 
@@ -55,10 +61,14 @@ class DeviceBuilder
         QueueFamilyInfo queueFamilyProperties;
     };
 
-    using DeviceSelector =
-        std::function<bool(const std::optional<PhysicalDeviceInfo>&, const PhysicalDeviceInfo&)>;
-    using QueueFamilySelector =
-        std::function<bool(const std::optional<QueueFamilyInfo>&, const QueueFamilyInfo&)>;
+    // If an error occurs, nothing should be returned. This is mainly supported because some
+    // functions like vkGetPhysicalDeviceSurfaceSupportKHR might return an error
+    using DeviceSelector = std::function<std::variant<bool, VkResult>(
+        const std::optional<PhysicalDeviceInfo>&,
+        const PhysicalDeviceInfo&)>;
+    using QueueFamilySelector = std::function<std::variant<bool, VkResult>(
+        const std::optional<QueueFamilyInfo>&,
+        const QueueFamilyInfo&)>;
     using BuildType = std::variant<Data, Error>;
 
     DeviceBuilder(const VkInstance instance, const VkSurfaceKHR surface);
@@ -71,10 +81,8 @@ class DeviceBuilder
     const VkInstance instance;
     const VkSurfaceKHR surface;
 
-    std::function<bool(const std::optional<PhysicalDeviceInfo>&, const PhysicalDeviceInfo&)>
-        deviceSelector;
-    std::function<bool(const std::optional<QueueFamilyInfo>&, const QueueFamilyInfo&)>
-        queueFamilySelector;
+    DeviceSelector deviceSelector;
+    QueueFamilySelector queueFamilySelector;
 
     std::optional<PhysicalDeviceInfo> deviceOpt;
     std::optional<QueueFamilyInfo> queueFamilyPropertiesOpt;
