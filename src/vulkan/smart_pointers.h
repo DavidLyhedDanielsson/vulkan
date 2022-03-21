@@ -2,6 +2,12 @@
 
 #include <vulkan/vulkan.hpp>
 
+#define SAFE_CALL(x, func)  \
+    if(x != VK_NULL_HANDLE) \
+    {                       \
+        func;               \
+    }
+
 // Transparent unique_ptr-like wrappers around vulkan types that require deletion
 // Using std::unique_ptr requires explicit creation, passing a deleter, and
 // using std::unique_ptr::get() over and over
@@ -10,11 +16,18 @@ class VkInstancePtr
 {
   public:
     VkInstancePtr(VkInstance instance): instance(instance) {}
-    VkInstancePtr(VkInstancePtr&&) = default;
-    VkInstancePtr& operator=(VkInstancePtr&&) = default;
+    VkInstancePtr(VkInstancePtr&& other) {
+        instance = other.instance;
+        other.instance = VK_NULL_HANDLE;
+    }
+    VkInstancePtr& operator=(VkInstancePtr&& other) {
+        instance = other.instance;
+        other.instance = VK_NULL_HANDLE;
+        return *this;
+    };
     VkInstancePtr(const VkInstancePtr&) = delete;
     VkInstancePtr& operator=(const VkInstancePtr&) = delete;
-    ~VkInstancePtr() { vkDestroyInstance(instance, nullptr); }
+    ~VkInstancePtr() { SAFE_CALL(instance, vkDestroyInstance(instance, nullptr)) }
     operator VkInstance() const { return instance; }
 
     VkInstance instance;
@@ -24,11 +37,18 @@ class VkDevicePtr
 {
   public:
     VkDevicePtr(VkDevice device): device(device) {}
-    VkDevicePtr(VkDevicePtr&&) = default;
-    VkDevicePtr& operator=(VkDevicePtr&&) = default;
+    VkDevicePtr(VkDevicePtr&& other) {
+        device = other.device;
+        other.device = VK_NULL_HANDLE;
+    }
+    VkDevicePtr& operator=(VkDevicePtr&& other) {
+        device = other.device;
+        other.device = VK_NULL_HANDLE;
+        return *this;
+    }
     VkDevicePtr(const VkDevicePtr&) = delete;
     VkDevicePtr& operator=(const VkDevicePtr&) = delete;
-    ~VkDevicePtr() { vkDestroyDevice(device, nullptr); }
+    ~VkDevicePtr() { SAFE_CALL(device, vkDestroyDevice(device, nullptr)) }
     operator VkDevice() const { return device; }
 
     VkDevice device;
@@ -38,11 +58,20 @@ class VkSurfacePtr
 {
   public:
     VkSurfacePtr(VkInstance instance, VkSurfaceKHR surface): instance(instance), surface(surface) {}
-    VkSurfacePtr(VkSurfacePtr&&) = default;
-    VkSurfacePtr& operator=(VkSurfacePtr&&) = default;
+    VkSurfacePtr(VkSurfacePtr&& other) {
+        instance = other.instance;
+        surface = other.surface;
+        other.surface = VK_NULL_HANDLE;
+    }
+    VkSurfacePtr& operator=(VkSurfacePtr&& other) {
+        instance = other.instance;
+        surface = other.surface;
+        other.surface = VK_NULL_HANDLE;
+        return *this;
+    }
     VkSurfacePtr(const VkSurfacePtr&) = delete;
     VkSurfacePtr& operator=(const VkSurfacePtr&) = delete;
-    ~VkSurfacePtr() { vkDestroySurfaceKHR(instance, surface, nullptr); }
+    ~VkSurfacePtr() { SAFE_CALL(surface, vkDestroySurfaceKHR(instance, surface, nullptr)) }
     operator VkSurfaceKHR() const { return surface; }
 
     VkInstance instance;
