@@ -82,15 +82,48 @@ class VkSwapchainPtr
 {
   public:
     VkSwapchainPtr(VkDevice device, VkSwapchainKHR swapchain): device(device), swapchain(swapchain) {}
-    VkSwapchainPtr(VkSwapchainPtr&&) = default;
-    VkSwapchainPtr& operator=(VkSwapchainPtr&&) = default;
+    VkSwapchainPtr(VkSwapchainPtr&& other) {
+        device = other.device;
+        swapchain = other.swapchain;
+        other.swapchain = VK_NULL_HANDLE;
+    }
+    VkSwapchainPtr& operator=(VkSwapchainPtr&& other) {
+        device = other.device;
+        swapchain = other.swapchain;
+        other.swapchain = VK_NULL_HANDLE;
+        return *this;
+    }
     VkSwapchainPtr(const VkSwapchainPtr&) = delete;
     VkSwapchainPtr& operator=(const VkSwapchainKHR&) = delete;
-    ~VkSwapchainPtr() { vkDestroySwapchainKHR(device, swapchain, nullptr); }
+    ~VkSwapchainPtr() { SAFE_CALL(swapchain, vkDestroySwapchainKHR(device, swapchain, nullptr)) }
     operator VkSwapchainKHR() const { return swapchain; }
 
     VkDevice device;
     VkSwapchainKHR swapchain;
+};
+
+class VkImageViewPtr
+{
+  public:
+    VkImageViewPtr(VkDevice device, VkImageView imageView): device(device), imageView(imageView) {}
+    VkImageViewPtr(VkImageViewPtr&& other) {
+        device = other.device;
+        imageView = other.imageView;
+        other.imageView = VK_NULL_HANDLE;
+    }
+    VkImageViewPtr& operator=(VkImageViewPtr&& other) {
+        device = other.device;
+        imageView = other.imageView;
+        other.imageView = VK_NULL_HANDLE;
+        return *this;
+    }
+    VkImageViewPtr(const VkImageViewPtr&) = delete;
+    VkImageViewPtr& operator=(const VkSwapchainKHR&) = delete;
+    ~VkImageViewPtr() { SAFE_CALL(imageView, vkDestroyImageView(device, imageView, nullptr)) }
+    operator VkImageView() const { return imageView; }
+
+    VkDevice device;
+    VkImageView imageView;
 };
 
 // clang-format on

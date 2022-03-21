@@ -17,6 +17,7 @@ class Vulkan
         Unsupported,
         InstanceProcAddrNotFound,
         InstanceProcAddrError,
+        OutOfMemory,
     };
 
     struct Error
@@ -37,6 +38,11 @@ class Vulkan
                 const char* instanceProc;
                 VkResult result;
             } InstanceProcAddrError;
+            struct
+            {
+                const char* message;
+                VkResult result;
+            } OutOfMemory;
         };
     };
 
@@ -65,21 +71,25 @@ class Vulkan
         void* pUserData);
 
     // Constructed through Vulkan::createVulkan
+    // The parameter list might be getting a bit long...
     Vulkan(
         VkInstancePtr instance,
+        VkDebugUtilsMessengerEXT msg,
         VkDevicePtr device,
         VkQueue workQueue,
         VkSurfacePtr surface,
-        VkSwapchainPtr swapChain);
+        VkSwapchainPtr swapChain,
+        std::vector<VkImage> swapChainImages,
+        std::vector<VkImageViewPtr> swapChainImageViews);
 
     // Don't touch the order or deinitialization will not work as intended
     VkInstancePtr instance;
+    VkDebugUtilsMessengerEXT msg;
     VkDevicePtr device;
     VkQueue workQueue;
     VkSurfacePtr surface;
     VkSwapchainPtr swapChain;
 
     std::vector<VkImage> swapChainImages;
-
-    VkDebugUtilsMessengerEXT msg;
+    std::vector<VkImageViewPtr> swapChainImageViews;
 };
