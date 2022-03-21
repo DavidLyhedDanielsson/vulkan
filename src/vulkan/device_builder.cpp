@@ -2,6 +2,33 @@
 
 #include "../stl_utils.h"
 
+struct ValidatedExtension
+{
+    const char* name;
+    bool required;
+    bool found;
+};
+
+VkResult visitExtensionProperties(
+    VkPhysicalDevice physicalDevice,
+    std::function<void(VkExtensionProperties)> visitor)
+{
+    uint32_t count = 0;
+    auto res = vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr);
+    if(res != VK_SUCCESS)
+        return res;
+
+    std::vector<VkExtensionProperties> properties(count);
+    res = vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, properties.data());
+    if(res != VK_SUCCESS)
+        return res;
+
+    for(uint32_t i = 0; i < count; ++i)
+        visitor(properties[i]);
+
+    return VK_SUCCESS;
+}
+
 DeviceBuilder::DeviceBuilder(const VkInstance instance, const VkSurfaceKHR surface)
     : instance(instance)
     , surface(surface)
@@ -17,6 +44,12 @@ DeviceBuilder& DeviceBuilder::selectDevice(DeviceSelector selector)
 DeviceBuilder& DeviceBuilder::selectQueueFamily(QueueFamilySelector selector)
 {
     this->queueFamilySelector = selector;
+    return *this;
+}
+
+DeviceBuilder& DeviceBuilder::withRequiredExtension(const char* name)
+{
+    requiredExtensions.push_back(name);
     return *this;
 }
 
@@ -44,6 +77,7 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 .properties = {},
                 .features = {},
                 .queueFamilyProperties = {},
+                .extensionProperties = {},
             };
             vkGetPhysicalDeviceProperties(devices[i], &deviceInfo.properties);
             vkGetPhysicalDeviceFeatures(devices[i], &deviceInfo.features);
@@ -55,6 +89,10 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 deviceInfo.device,
                 &queueFamilyCount,
                 deviceInfo.queueFamilyProperties.data());
+
+            visitExtensionProperties(deviceInfo.device, [&deviceInfo](VkExtensionProperties prop) {
+                deviceInfo.extensionProperties.push_back(prop);
+            });
 
             if(deviceSelector)
             {
@@ -96,11 +134,43 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                         break;
                 }
 
+                requiredExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+                std::vector<ValidatedExtension> validatedExtensions =
+                    map(requiredExtensions, [](const char* extensionName) {
+                        return ValidatedExtension{
+                            .name = extensionName,
+                            .required = true,
+                            .found = false};
+                    });
+
+                visitExtensionProperties(
+                    deviceInfo.device,
+                    [&validatedExtensions](VkExtensionProperties prop) {
+                        for(auto [extension, index] : Index(validatedExtensions))
+                        {
+                            if(std::strcmp(extension.name, prop.extensionName) == 0)
+                            {
+                                validatedExtensions[index].found = true;
+                                return;
+                            }
+                        }
+                    });
+
+                bool hasRequiredExtensions = true;
+                for(const ValidatedExtension& extension : validatedExtensions)
+                {
+                    if(extension.required && !extension.found)
+                    {
+                        hasRequiredExtensions = false;
+                        break;
+                    }
+                }
+
                 if(!hasDiscrete
                    && (deviceInfo.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
                        || deviceInfo.properties.deviceType
                               == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
-                   && supportPresent)
+                   && supportPresent && hasRequiredExtensions)
                 {
                     deviceOpt = deviceInfo;
                 }
@@ -187,8 +257,8 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         .pQueueCreateInfos = &queueInfo,
         .enabledLayerCount = 0,
         .ppEnabledLayerNames = nullptr,
-        .enabledExtensionCount = 0,
-        .ppEnabledExtensionNames = nullptr,
+        .enabledExtensionCount = (uint32_t)requiredExtensions.size(),
+        .ppEnabledExtensionNames = requiredExtensions.data(),
         .pEnabledFeatures = nullptr,
     };
 

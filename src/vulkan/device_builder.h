@@ -12,6 +12,7 @@ struct PhysicalDeviceInfo
     VkPhysicalDeviceProperties properties;
     VkPhysicalDeviceFeatures features;
     std::vector<VkQueueFamilyProperties> queueFamilyProperties;
+    std::vector<VkExtensionProperties> extensionProperties;
 };
 
 struct QueueFamilyInfo
@@ -75,11 +76,15 @@ class DeviceBuilder
     DeviceBuilder& selectDevice(DeviceSelector selector);
     DeviceBuilder& selectQueueFamily(QueueFamilySelector selector);
 
+    DeviceBuilder& withRequiredExtension(const char* name);
+
     BuildType build();
 
   private:
     const VkInstance instance;
     const VkSurfaceKHR surface;
+
+    std::vector<const char*> requiredExtensions;
 
     DeviceSelector deviceSelector;
     QueueFamilySelector queueFamilySelector;
