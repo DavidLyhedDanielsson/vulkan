@@ -29,7 +29,7 @@ VkResult visitExtensionProperties(
     return VK_SUCCESS;
 }
 
-DeviceBuilder::DeviceBuilder(const VkInstance instance, const VkSurfaceKHR surface)
+DeviceBuilder::DeviceBuilder(const VkInstancePtr& instance, const VkSurfacePtr& surface)
     : instance(instance)
     , surface(surface)
 {
@@ -313,14 +313,15 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         .pEnabledFeatures = nullptr,
     };
 
-    VkDevice device;
-    auto res = vkCreateDevice(physicalDeviceInfo.device, &deviceCreateInfo, nullptr, &device);
+    VkDevice deviceRaw;
+    auto res = vkCreateDevice(physicalDeviceInfo.device, &deviceCreateInfo, nullptr, &deviceRaw);
     if(res != VK_SUCCESS)
     {
         error.type = ErrorType::DeviceCreationError;
         error.DeviceCreationError.result = res;
         return error;
     }
+    VkDevicePtr device(deviceRaw);
 
     auto defaultSurfaceFormatSelector =
         [](const PhysicalDeviceInfo& info) -> std::optional<VkSurfaceFormatKHR> {
@@ -378,8 +379,9 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         .clipped = VK_TRUE,
         .oldSwapchain = VK_NULL_HANDLE,
     };
-    VkSwapchainKHR swapChain;
-    res = vkCreateSwapchainKHR(device, &swapChainCreateInfo, nullptr, &swapChain);
+    VkSwapchainKHR swapChainRaw;
+    res = vkCreateSwapchainKHR(device, &swapChainCreateInfo, nullptr, &swapChainRaw);
+    VkSwapchainPtr swapChain(device, swapChainRaw);
 
     if(res != VK_SUCCESS)
     {
@@ -389,8 +391,8 @@ DeviceBuilder::BuildType DeviceBuilder::build()
     }
 
     return Data{
-        .device = device,
-        .swapChain = swapChain,
+        .device = std::move(device),
+        .swapChain = std::move(swapChain),
         .physicalDeviceInfo = physicalDeviceInfo,
         .queueFamilyProperties = queueFamilyProperties,
     };

@@ -6,6 +6,8 @@
 #include <optional>
 #include <variant>
 
+#include "smart_pointers.h"
+
 struct PhysicalDeviceInfo
 {
     VkPhysicalDevice device;
@@ -67,8 +69,8 @@ class DeviceBuilder
 
     struct Data
     {
-        VkDevice device;
-        VkSwapchainKHR swapChain;
+        VkDevicePtr device;
+        VkSwapchainPtr swapChain;
         PhysicalDeviceInfo physicalDeviceInfo;
         QueueFamilyInfo queueFamilyProperties;
     };
@@ -87,7 +89,7 @@ class DeviceBuilder
         std::function<std::optional<VkPresentModeKHR>(const PhysicalDeviceInfo&)>;
     using BuildType = std::variant<Data, Error>;
 
-    DeviceBuilder(const VkInstance instance, const VkSurfaceKHR surface);
+    DeviceBuilder(const VkInstancePtr& instance, const VkSurfacePtr& surface);
     DeviceBuilder& selectDevice(DeviceSelector selector);
     DeviceBuilder& selectQueueFamily(QueueFamilySelector selector);
     DeviceBuilder& selectSurfaceFormat(SurfaceFormatSelector selector);
@@ -98,8 +100,8 @@ class DeviceBuilder
     BuildType build();
 
   private:
-    const VkInstance instance;
-    const VkSurfaceKHR surface;
+    const VkInstancePtr& instance;
+    const VkSurfacePtr& surface;
 
     std::vector<const char*> requiredExtensions;
 

@@ -7,6 +7,8 @@
 #include <variant>
 #include <vector>
 
+#include "smart_pointers.h"
+
 struct Layer
 {
     const char* name;
@@ -45,7 +47,7 @@ class InstanceBuilder
         };
     };
 
-    using BuildType = std::variant<VkInstance, Error>;
+    using BuildType = std::variant<VkInstancePtr, Error>;
 
     InstanceBuilder();
     InstanceBuilder& withApplicationVersion(

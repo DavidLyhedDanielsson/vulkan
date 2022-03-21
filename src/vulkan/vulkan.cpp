@@ -34,10 +34,11 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
             error.type = ErrorType::HardwareError;
         return error;
     }
-    auto instance = std::get<VkInstance>(instanceVar);
+    auto instance = std::get<VkInstancePtr>(std::move(instanceVar));
 
-    VkSurfaceKHR surface;
-    auto res = glfwCreateWindowSurface(instance, windowHandle, nullptr, &surface);
+    VkSurfaceKHR surfaceRaw;
+    auto res = glfwCreateWindowSurface(instance, windowHandle, nullptr, &surfaceRaw);
+    VkSurfacePtr surface(instance, surfaceRaw);
     if(res != VK_SUCCESS)
     {
         error.type = ErrorType::Unsupported;
@@ -54,7 +55,7 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
         error.type = ErrorType::HardwareError;
         return error;
     }
-    auto deviceInfo = std::get<DeviceBuilder::Data>(deviceVar);
+    auto deviceInfo = std::get<DeviceBuilder::Data>(std::move(deviceVar));
 
     VkQueue workQueue;
     vkGetDeviceQueue(deviceInfo.device, deviceInfo.queueFamilyProperties.index, 0, &workQueue);
@@ -73,17 +74,22 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
         .pUserData = nullptr,
     };
 
-    Vulkan vulkan(instance, deviceInfo.device, workQueue, surface, deviceInfo.swapChain);
+    Vulkan vulkan(
+        std::move(instance),
+        std::move(deviceInfo.device),
+        workQueue,
+        std::move(surface),
+        std::move(deviceInfo.swapChain));
 
     auto createDebugUtilsMessenger =
-        vkGetInstanceProcAddrQ(instance, vkCreateDebugUtilsMessengerEXT);
+        vkGetInstanceProcAddrQ(vulkan.instance, vkCreateDebugUtilsMessengerEXT);
     if(!createDebugUtilsMessenger)
     {
         error.type = ErrorType::InstanceProcAddrNotFound;
         error.InstanceProcAddrNotFound.instanceProc = "vkCreateDebugUtilsMessengerEXT";
         return error;
     }
-    res = createDebugUtilsMessenger(instance, &msgCreateInfo, nullptr, &(vulkan.msg));
+    res = createDebugUtilsMessenger(vulkan.instance, &msgCreateInfo, nullptr, &(vulkan.msg));
     if(res != VK_SUCCESS)
     {
         error.type = ErrorType::InstanceProcAddrNotFound;
@@ -96,20 +102,16 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
 }
 
 Vulkan::Vulkan(
-    VkInstance instance,
-    VkDevice device,
+    VkInstancePtr instance,
+    VkDevicePtr device,
     VkQueue workQueue,
-    VkSurfaceKHR surface,
-    VkSwapchainKHR swapChain)
-    : instance(instance, [](VkInstance_T* instance) { vkDestroyInstance(instance, nullptr); })
-    , device(device, [](VkDevice_T* device) { vkDestroyDevice(device, nullptr); })
+    VkSurfacePtr surface,
+    VkSwapchainPtr swapChain)
+    : instance(std::move(instance))
+    , device(std::move(device))
     , workQueue(workQueue)
-    , surface(
-          surface,
-          [instance](VkSurfaceKHR_T* surface) { vkDestroySurfaceKHR(instance, surface, nullptr); })
-    , swapChain(swapChain, [device](VkSwapchainKHR_T* swapChain) {
-        vkDestroySwapchainKHR(device, swapChain, nullptr);
-    })
+    , surface(std::move(surface))
+    , swapChain(std::move(swapChain))
 {
     uint32_t imageCount = 0;
     vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
@@ -120,13 +122,9 @@ Vulkan::Vulkan(
 Vulkan::~Vulkan()
 {
     // Moving an instance is allowed
-    if(instance.get())
+    if(auto destroy = vkGetInstanceProcAddrQ(instance, vkDestroyDebugUtilsMessengerEXT); destroy)
     {
-        if(auto destroy = vkGetInstanceProcAddrQ(instance.get(), vkDestroyDebugUtilsMessengerEXT);
-           destroy)
-        {
-            destroy(instance.get(), msg, nullptr);
-        }
+        destroy(instance, msg, nullptr);
     }
 }
 
