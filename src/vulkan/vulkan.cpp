@@ -73,7 +73,7 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
         .pUserData = nullptr,
     };
 
-    Vulkan vulkan(instance, deviceInfo.device, workQueue, surface);
+    Vulkan vulkan(instance, deviceInfo.device, workQueue, surface, deviceInfo.swapChain);
 
     auto createDebugUtilsMessenger =
         vkGetInstanceProcAddrQ(instance, vkCreateDebugUtilsMessengerEXT);
@@ -95,14 +95,26 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
     return vulkan;
 }
 
-Vulkan::Vulkan(VkInstance instance, VkDevice device, VkQueue workQueue, VkSurfaceKHR surface)
+Vulkan::Vulkan(
+    VkInstance instance,
+    VkDevice device,
+    VkQueue workQueue,
+    VkSurfaceKHR surface,
+    VkSwapchainKHR swapChain)
     : instance(instance, [](VkInstance_T* instance) { vkDestroyInstance(instance, nullptr); })
     , device(device, [](VkDevice_T* device) { vkDestroyDevice(device, nullptr); })
     , workQueue(workQueue)
-    , surface(surface, [instance](VkSurfaceKHR_T* surface) {
-        vkDestroySurfaceKHR(instance, surface, nullptr);
+    , surface(
+          surface,
+          [instance](VkSurfaceKHR_T* surface) { vkDestroySurfaceKHR(instance, surface, nullptr); })
+    , swapChain(swapChain, [device](VkSwapchainKHR_T* swapChain) {
+        vkDestroySwapchainKHR(device, swapChain, nullptr);
     })
 {
+    uint32_t imageCount = 0;
+    vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
+    swapChainImages.resize(imageCount);
+    vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
 }
 
 Vulkan::~Vulkan()

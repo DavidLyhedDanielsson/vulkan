@@ -13,6 +13,9 @@ struct PhysicalDeviceInfo
     VkPhysicalDeviceFeatures features;
     std::vector<VkQueueFamilyProperties> queueFamilyProperties;
     std::vector<VkExtensionProperties> extensionProperties;
+    std::vector<VkSurfaceFormatKHR> surfaceFormats;
+    std::vector<VkPresentModeKHR> presentModes;
+    VkSurfaceCapabilitiesKHR surfaceCapabilities;
 };
 
 struct QueueFamilyInfo
@@ -31,6 +34,9 @@ class DeviceBuilder
         NoPhysicalDeviceFound,
         NoQueueFamilyFound,
         DeviceCreationError,
+        NoSurfaceFormatFound,
+        NoPresentModeFound,
+        SwapChainCreationError,
         Fatal, // Something unspecified happened but we can't continue
     };
 
@@ -50,6 +56,10 @@ class DeviceBuilder
             struct
             {
                 VkResult result;
+            } SwapChainCreationError;
+            struct
+            {
+                VkResult result;
                 const char* message;
             } Fatal;
         };
@@ -58,6 +68,7 @@ class DeviceBuilder
     struct Data
     {
         VkDevice device;
+        VkSwapchainKHR swapChain;
         PhysicalDeviceInfo physicalDeviceInfo;
         QueueFamilyInfo queueFamilyProperties;
     };
@@ -70,11 +81,17 @@ class DeviceBuilder
     using QueueFamilySelector = std::function<std::variant<bool, VkResult>(
         const std::optional<QueueFamilyInfo>&,
         const QueueFamilyInfo&)>;
+    using SurfaceFormatSelector =
+        std::function<std::optional<VkSurfaceFormatKHR>(const PhysicalDeviceInfo&)>;
+    using PresentModeSelector =
+        std::function<std::optional<VkPresentModeKHR>(const PhysicalDeviceInfo&)>;
     using BuildType = std::variant<Data, Error>;
 
     DeviceBuilder(const VkInstance instance, const VkSurfaceKHR surface);
     DeviceBuilder& selectDevice(DeviceSelector selector);
     DeviceBuilder& selectQueueFamily(QueueFamilySelector selector);
+    DeviceBuilder& selectSurfaceFormat(SurfaceFormatSelector selector);
+    DeviceBuilder& selectPresentMode(PresentModeSelector selector);
 
     DeviceBuilder& withRequiredExtension(const char* name);
 
@@ -88,6 +105,8 @@ class DeviceBuilder
 
     DeviceSelector deviceSelector;
     QueueFamilySelector queueFamilySelector;
+    SurfaceFormatSelector surfaceFormatSelector;
+    PresentModeSelector presentModeSelector;
 
     std::optional<PhysicalDeviceInfo> deviceOpt;
     std::optional<QueueFamilyInfo> queueFamilyPropertiesOpt;

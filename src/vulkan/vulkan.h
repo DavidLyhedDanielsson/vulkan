@@ -63,7 +63,12 @@ class Vulkan
         void* pUserData);
 
     // Constructed through Vulkan::createVulkan
-    Vulkan(VkInstance instance, VkDevice device, VkQueue workQueue, VkSurfaceKHR surface);
+    Vulkan(
+        VkInstance instance,
+        VkDevice device,
+        VkQueue workQueue,
+        VkSurfaceKHR surface,
+        VkSwapchainKHR swapChain);
 
     // Don't touch the order or deinitialization will not work as intended
     std::unique_ptr<VkInstance_T, void (*)(VkInstance_T*)> instance;
@@ -72,6 +77,9 @@ class Vulkan
     // Destroying a surface requires the instance, so the lambda needs to capture `this` or
     // `instance`; requiring std::function
     std::unique_ptr<VkSurfaceKHR_T, std::function<void(VkSurfaceKHR_T*)>> surface;
+    std::unique_ptr<VkSwapchainKHR_T, std::function<void(VkSwapchainKHR_T*)>> swapChain;
+
+    std::vector<VkImage> swapChainImages;
 
     VkDebugUtilsMessengerEXT msg;
 };

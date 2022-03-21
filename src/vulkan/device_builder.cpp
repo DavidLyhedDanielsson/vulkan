@@ -47,6 +47,18 @@ DeviceBuilder& DeviceBuilder::selectQueueFamily(QueueFamilySelector selector)
     return *this;
 }
 
+DeviceBuilder& DeviceBuilder::selectSurfaceFormat(SurfaceFormatSelector selector)
+{
+    this->surfaceFormatSelector = selector;
+    return *this;
+}
+
+DeviceBuilder& DeviceBuilder::selectPresentMode(PresentModeSelector selector)
+{
+    this->presentModeSelector = selector;
+    return *this;
+}
+
 DeviceBuilder& DeviceBuilder::withRequiredExtension(const char* name)
 {
     requiredExtensions.push_back(name);
@@ -56,6 +68,9 @@ DeviceBuilder& DeviceBuilder::withRequiredExtension(const char* name)
 DeviceBuilder::BuildType DeviceBuilder::build()
 {
     Error error = {};
+
+    // Always require swap chain support, whether using a custom selector or not
+    requiredExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
     {
         uint32_t count = 0;
@@ -78,6 +93,9 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 .features = {},
                 .queueFamilyProperties = {},
                 .extensionProperties = {},
+                .surfaceFormats = {},
+                .presentModes = {},
+                .surfaceCapabilities = {},
             };
             vkGetPhysicalDeviceProperties(devices[i], &deviceInfo.properties);
             vkGetPhysicalDeviceFeatures(devices[i], &deviceInfo.features);
@@ -90,9 +108,44 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 &queueFamilyCount,
                 deviceInfo.queueFamilyProperties.data());
 
-            visitExtensionProperties(deviceInfo.device, [&deviceInfo](VkExtensionProperties prop) {
-                deviceInfo.extensionProperties.push_back(prop);
-            });
+            bool hasSwapchainSupport = false;
+            visitExtensionProperties(
+                deviceInfo.device,
+                [&deviceInfo, &hasSwapchainSupport](VkExtensionProperties prop) {
+                    deviceInfo.extensionProperties.push_back(prop);
+                    if(std::strcmp(prop.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
+                        hasSwapchainSupport = true;
+                });
+
+            if(!hasSwapchainSupport)
+                continue;
+
+            vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+                deviceInfo.device,
+                surface,
+                &deviceInfo.surfaceCapabilities);
+
+            uint32_t formatCount;
+            vkGetPhysicalDeviceSurfaceFormatsKHR(deviceInfo.device, surface, &formatCount, nullptr);
+            deviceInfo.surfaceFormats.resize(formatCount);
+            vkGetPhysicalDeviceSurfaceFormatsKHR(
+                deviceInfo.device,
+                surface,
+                &formatCount,
+                deviceInfo.surfaceFormats.data());
+
+            uint32_t presentModeCount;
+            vkGetPhysicalDeviceSurfacePresentModesKHR(
+                deviceInfo.device,
+                surface,
+                &presentModeCount,
+                nullptr);
+            deviceInfo.presentModes.resize(presentModeCount);
+            vkGetPhysicalDeviceSurfacePresentModesKHR(
+                deviceInfo.device,
+                surface,
+                &presentModeCount,
+                deviceInfo.presentModes.data());
 
             if(deviceSelector)
             {
@@ -109,7 +162,7 @@ DeviceBuilder::BuildType DeviceBuilder::build()
             else
             {
                 // Default selector selects any discrete GPU over any integrated GPU, but requires
-                // presentation support
+                // presentation support and VK_KHR_SWAPCHAIN_EXTENSION
                 bool hasDiscrete = deviceOpt.has_value()
                                    && deviceOpt.value().properties.deviceType
                                           == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
@@ -134,7 +187,6 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                         break;
                 }
 
-                requiredExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
                 std::vector<ValidatedExtension> validatedExtensions =
                     map(requiredExtensions, [](const char* extensionName) {
                         return ValidatedExtension{
@@ -236,7 +288,6 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         error.type = ErrorType::NoQueueFamilyFound;
         return error;
     }
-
     auto queueFamilyProperties = queueFamilyPropertiesOpt.value();
 
     float queuePriority = 1.0f;
@@ -264,16 +315,83 @@ DeviceBuilder::BuildType DeviceBuilder::build()
 
     VkDevice device;
     auto res = vkCreateDevice(physicalDeviceInfo.device, &deviceCreateInfo, nullptr, &device);
-    if(res == VK_SUCCESS)
-        return Data{
-            .device = device,
-            .physicalDeviceInfo = physicalDeviceInfo,
-            .queueFamilyProperties = queueFamilyProperties,
-        };
-    else
+    if(res != VK_SUCCESS)
     {
         error.type = ErrorType::DeviceCreationError;
         error.DeviceCreationError.result = res;
         return error;
     }
+
+    auto defaultSurfaceFormatSelector =
+        [](const PhysicalDeviceInfo& info) -> std::optional<VkSurfaceFormatKHR> {
+        auto iter =
+            std::find_if(entire_collection(info.surfaceFormats), [](VkSurfaceFormatKHR format) {
+                return format.format == VK_FORMAT_B8G8R8A8_SRGB;
+            });
+
+        if(iter == info.surfaceFormats.end())
+            return std::nullopt;
+        else
+            return *iter;
+    };
+    std::optional<VkSurfaceFormatKHR> surfaceFormatOpt =
+        (this->surfaceFormatSelector ? this->surfaceFormatSelector
+                                     : defaultSurfaceFormatSelector)(physicalDeviceInfo);
+    if(!surfaceFormatOpt.has_value())
+    {
+        error.type = ErrorType::NoSurfaceFormatFound;
+        return error;
+    }
+    VkSurfaceFormatKHR surfaceFormat = surfaceFormatOpt.value();
+
+    auto defaultPresentModeSelector =
+        [](const PhysicalDeviceInfo&) -> std::optional<VkPresentModeKHR> {
+        return VK_PRESENT_MODE_FIFO_KHR;
+    };
+    std::optional<VkPresentModeKHR> presentModeOpt =
+        (this->presentModeSelector ? this->presentModeSelector
+                                   : defaultPresentModeSelector)(physicalDeviceInfo);
+    if(!presentModeOpt.has_value())
+    {
+        error.type = ErrorType::NoPresentModeFound;
+        return error;
+    }
+    VkPresentModeKHR presentMode = presentModeOpt.value();
+
+    VkSwapchainCreateInfoKHR swapChainCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .pNext = nullptr,
+        .flags = 0,
+        .surface = surface,
+        .minImageCount = physicalDeviceInfo.surfaceCapabilities.minImageCount + 1,
+        .imageFormat = surfaceFormat.format,
+        .imageColorSpace = surfaceFormat.colorSpace,
+        .imageExtent = physicalDeviceInfo.surfaceCapabilities.currentExtent,
+        .imageArrayLayers = 1,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+        .preTransform = physicalDeviceInfo.surfaceCapabilities.currentTransform,
+        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .presentMode = presentMode,
+        .clipped = VK_TRUE,
+        .oldSwapchain = VK_NULL_HANDLE,
+    };
+    VkSwapchainKHR swapChain;
+    res = vkCreateSwapchainKHR(device, &swapChainCreateInfo, nullptr, &swapChain);
+
+    if(res != VK_SUCCESS)
+    {
+        error.type = ErrorType::SwapChainCreationError;
+        error.SwapChainCreationError.result = res;
+        return error;
+    }
+
+    return Data{
+        .device = device,
+        .swapChain = swapChain,
+        .physicalDeviceInfo = physicalDeviceInfo,
+        .queueFamilyProperties = queueFamilyProperties,
+    };
 }
