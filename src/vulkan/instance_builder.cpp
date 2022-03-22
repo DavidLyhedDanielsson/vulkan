@@ -9,31 +9,26 @@ struct ValidatedLayer
     bool found;
 };
 
-VkResult visitValidationLayers(std::function<void(VkLayerProperties)> visitor)
+vk::Result visitValidationLayers(std::function<void(vk::LayerProperties)> visitor)
 {
-    uint32_t writtenProperties = 0;
-    vkEnumerateInstanceLayerProperties(&writtenProperties, nullptr);
-
-    // I wanted to do this without dynamic allocation but apparently there's no
-    // way to specify an offset into vkEnumerate
-    std::vector<VkLayerProperties> layers(writtenProperties);
-    auto res = vkEnumerateInstanceLayerProperties(&writtenProperties, layers.data());
-    if(res != VK_SUCCESS)
+    auto [res, layers] = vk::enumerateInstanceLayerProperties();
+    if(res != vk::Result::eSuccess)
         return res;
 
-    for(uint32_t i = 0; i < writtenProperties; ++i)
-        visitor(layers[i]);
+    for(auto layer : layers)
+        visitor(layer);
 
-    return VK_SUCCESS;
+    return vk::Result::eSuccess;
 }
 
-std::variant<std::vector<ValidatedLayer>, VkResult> validateLayers(const std::vector<Layer>& layers)
+std::variant<std::vector<ValidatedLayer>, vk::Result> validateLayers(
+    const std::vector<Layer>& layers)
 {
     std::vector<ValidatedLayer> validatedLayers = map(layers, [](const Layer& layer) {
         return ValidatedLayer{.name = layer.name, .required = layer.required, .found = false};
     });
 
-    auto result = visitValidationLayers([&validatedLayers, layers](VkLayerProperties prop) {
+    auto result = visitValidationLayers([&validatedLayers, layers](vk::LayerProperties prop) {
         for(auto [layer, index] : Index(layers))
         {
             if(std::strcmp(layer.name, prop.layerName) == 0)
@@ -44,7 +39,7 @@ std::variant<std::vector<ValidatedLayer>, VkResult> validateLayers(const std::ve
         }
     });
 
-    if(result != VK_SUCCESS)
+    if(result != vk::Result::eSuccess)
         return {result};
     else
         return {validatedLayers};
@@ -52,8 +47,6 @@ std::variant<std::vector<ValidatedLayer>, VkResult> validateLayers(const std::ve
 
 InstanceBuilder::InstanceBuilder()
     : applicationInfo({
-        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pNext = nullptr,
         .pApplicationName = "Vulkan application",
         .applicationVersion = VK_MAKE_API_VERSION(0, 0, 1, 0),
         .pEngineName = "Undecided",
@@ -128,10 +121,10 @@ InstanceBuilder::BuildType InstanceBuilder::build()
     Error error = {};
 
     auto validatedLayersVar = validateLayers(layers);
-    if(std::holds_alternative<VkResult>(validatedLayersVar))
+    if(std::holds_alternative<vk::Result>(validatedLayersVar))
     {
         error.type = ErrorType::EnumerateInstanceLayerProperties;
-        error.EnumerateInstanceLayerProperties.result = std::get<VkResult>(validatedLayersVar);
+        error.EnumerateInstanceLayerProperties.result = std::get<vk::Result>(validatedLayersVar);
         return error;
     };
 
@@ -150,10 +143,7 @@ InstanceBuilder::BuildType InstanceBuilder::build()
     std::vector<const char*> layerNames =
         map(layers, [](const Layer& layer) { return layer.name; });
 
-    VkInstanceCreateInfo instanceCreateInfo = {
-        .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
+    vk::InstanceCreateInfo instanceCreateInfo = {
         .pApplicationInfo = &this->applicationInfo,
         .enabledLayerCount = (uint32_t)layerNames.size(),
         .ppEnabledLayerNames = layerNames.data(),
@@ -161,10 +151,9 @@ InstanceBuilder::BuildType InstanceBuilder::build()
         .ppEnabledExtensionNames = requiredExtensions.data(),
     };
 
-    VkInstance instance;
-    auto res = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
-    if(res == VK_SUCCESS)
-        return BuildType(instance);
+    auto [res, instance] = vk::createInstanceUnique(instanceCreateInfo);
+    if(res == vk::Result::eSuccess)
+        return BuildType(std::move(instance));
     else
     {
         error.type = ErrorType::InstanceCreationError;

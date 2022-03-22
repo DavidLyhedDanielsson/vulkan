@@ -9,7 +9,28 @@
 #include "device_builder.h"
 #include "instance_builder.h"
 
-#define vkGetInstanceProcAddrQ(instance, func) (PFN_##func) vkGetInstanceProcAddr(instance, #func)
+#define vkGetInstanceProcAddrQ(instance, func) (PFN_##func) instance->getProcAddr(#func)
+
+// https://github.com/KhronosGroup/Vulkan-Hpp/blob/master/samples/CreateDebugUtilsMessenger/CreateDebugUtilsMessenger.cpp
+PFN_vkCreateDebugUtilsMessengerEXT pfnVkCreateDebugUtilsMessengerEXT;
+PFN_vkDestroyDebugUtilsMessengerEXT pfnVkDestroyDebugUtilsMessengerEXT;
+
+VKAPI_ATTR VkResult VKAPI_CALL vkCreateDebugUtilsMessengerEXT(
+    VkInstance instance,
+    const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkDebugUtilsMessengerEXT* pMessenger)
+{
+    return pfnVkCreateDebugUtilsMessengerEXT(instance, pCreateInfo, pAllocator, pMessenger);
+}
+
+VKAPI_ATTR void VKAPI_CALL vkDestroyDebugUtilsMessengerEXT(
+    VkInstance instance,
+    VkDebugUtilsMessengerEXT messenger,
+    VkAllocationCallbacks const* pAllocator)
+{
+    return pfnVkDestroyDebugUtilsMessengerEXT(instance, messenger, pAllocator);
+}
 
 Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
 {
@@ -34,48 +55,56 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
             error.type = ErrorType::HardwareError;
         return error;
     }
-    auto instance = std::get<VkInstancePtr>(std::move(instanceVar));
+    auto instance = std::get<vk::UniqueInstance>(std::move(instanceVar));
 
-    VkDebugUtilsMessengerCreateInfoEXT msgCreateInfo = {
-        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-        .pNext = nullptr,
-        .flags = 0,
-        .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
-                           | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-                           | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-        .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-                       | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-                       | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+    vk::DebugUtilsMessengerCreateInfoEXT msgCreateInfo = {
+        .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose
+                           | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning
+                           | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+        .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral
+                       | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance
+                       | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
         .pfnUserCallback = Vulkan::debugCallback,
         .pUserData = nullptr,
     };
-    auto createDebugUtilsMessenger =
+
+    pfnVkCreateDebugUtilsMessengerEXT =
         vkGetInstanceProcAddrQ(instance, vkCreateDebugUtilsMessengerEXT);
-    if(!createDebugUtilsMessenger)
+    if(!pfnVkCreateDebugUtilsMessengerEXT)
     {
         error.type = ErrorType::InstanceProcAddrNotFound;
         error.InstanceProcAddrNotFound.instanceProc = "vkCreateDebugUtilsMessengerEXT";
         return error;
     }
-    VkDebugUtilsMessengerEXT msg;
-    auto res = createDebugUtilsMessenger(instance, &msgCreateInfo, nullptr, &msg);
-    if(res != VK_SUCCESS)
+
+    pfnVkDestroyDebugUtilsMessengerEXT =
+        vkGetInstanceProcAddrQ(instance, vkDestroyDebugUtilsMessengerEXT);
+    if(!pfnVkCreateDebugUtilsMessengerEXT)
     {
         error.type = ErrorType::InstanceProcAddrNotFound;
-        error.InstanceProcAddrError.instanceProc = "vkCreateDebugUtilsMessengerEXT";
-        error.InstanceProcAddrError.result = res;
+        error.InstanceProcAddrNotFound.instanceProc = "vkDestroyDebugUtilsMessengerEXT";
+        return error;
+    }
+
+    auto [cdrcRes, msg] = instance->createDebugUtilsMessengerEXTUnique(msgCreateInfo);
+
+    if(cdrcRes != vk::Result::eSuccess)
+    {
+        error.type = ErrorType::OutOfMemory;
+        error.OutOfMemory.result = cdrcRes;
+        error.OutOfMemory.message = "createDebugUtilsMessengerEXTUnique";
         return error;
     }
 
     VkSurfaceKHR surfaceRaw;
-    res = glfwCreateWindowSurface(instance, windowHandle, nullptr, &surfaceRaw);
-    VkSurfacePtr surface(instance, surfaceRaw);
-    if(res != VK_SUCCESS)
+    auto glfwRes = glfwCreateWindowSurface(instance.get(), windowHandle, nullptr, &surfaceRaw);
+    if(glfwRes != VK_SUCCESS)
     {
         error.type = ErrorType::Unsupported;
         error.Unsupported.message = "Can't create surface";
         return error;
     }
+    vk::UniqueSurfaceKHR surface(surfaceRaw, instance.get());
 
     // Defaults are fine for now
     auto deviceVar = DeviceBuilder(instance, surface).build();
@@ -88,39 +117,35 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
     }
     auto deviceInfo = std::get<DeviceBuilder::Data>(std::move(deviceVar));
 
-    VkQueue workQueue;
-    vkGetDeviceQueue(deviceInfo.device, deviceInfo.queueFamilyProperties.index, 0, &workQueue);
-
-    uint32_t imageCount = 0;
-    vkGetSwapchainImagesKHR(deviceInfo.device, deviceInfo.swapChain, &imageCount, nullptr);
-    std::vector<VkImage> swapChainImages(imageCount);
-    vkGetSwapchainImagesKHR(
-        deviceInfo.device,
-        deviceInfo.swapChain,
-        &imageCount,
-        swapChainImages.data());
-
-    std::vector<VkImageViewPtr> swapChainImageViews;
-    swapChainImageViews.reserve(imageCount);
-    for(VkImage image : swapChainImages)
+    vk::Queue workQueue = deviceInfo.device->getQueue(deviceInfo.queueFamilyProperties.index, 0);
+    auto [gsiRes, swapChainImages] =
+        deviceInfo.device->getSwapchainImagesKHR(deviceInfo.swapChain.get());
+    if(gsiRes != vk::Result::eSuccess)
     {
-        VkImageViewCreateInfo imageCreateInfo = {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .pNext = nullptr,
-            .flags = 0,
+        error.type = ErrorType::OutOfMemory;
+        error.OutOfMemory.result = gsiRes;
+        error.OutOfMemory.message = "getSwapchainImagesKHR";
+        return error;
+    }
+
+    std::vector<vk::UniqueImageView> swapChainImageViews;
+    swapChainImageViews.reserve(swapChainImages.size());
+    for(vk::Image image : swapChainImages)
+    {
+        vk::ImageViewCreateInfo imageCreateInfo = {
             .image = image,
-            .viewType = VK_IMAGE_VIEW_TYPE_2D,
-            .format = VK_FORMAT_B8G8R8A8_SRGB, // TODO
+            .viewType = vk::ImageViewType::e2D,
+            .format = vk::Format::eB8G8R8A8Srgb, // TODO
             .components =
                 {
-                    .r = VK_COMPONENT_SWIZZLE_IDENTITY,
-                    .g = VK_COMPONENT_SWIZZLE_IDENTITY,
-                    .b = VK_COMPONENT_SWIZZLE_IDENTITY,
-                    .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .r = vk::ComponentSwizzle::eIdentity,
+                    .g = vk::ComponentSwizzle::eIdentity,
+                    .b = vk::ComponentSwizzle::eIdentity,
+                    .a = vk::ComponentSwizzle::eIdentity,
                 },
             .subresourceRange =
                 {
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .aspectMask = vk::ImageAspectFlagBits::eColor,
                     .baseMipLevel = 0,
                     .levelCount = 1,
                     .baseArrayLayer = 0,
@@ -128,22 +153,21 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
                 },
         };
 
-        VkImageView imageViewRaw;
-        auto res = vkCreateImageView(deviceInfo.device, &imageCreateInfo, nullptr, &imageViewRaw);
-        if(res != VK_SUCCESS)
+        auto [civRes, imageViewRaw] = deviceInfo.device->createImageViewUnique(imageCreateInfo);
+        if(civRes != vk::Result::eSuccess)
         {
             error.type = ErrorType::OutOfMemory;
-            error.OutOfMemory.result = res;
+            error.OutOfMemory.result = civRes;
             error.OutOfMemory.message = "vkCreateImageView - swapchain";
             return error;
         }
 
-        swapChainImageViews.emplace_back(VkImageViewPtr(deviceInfo.device, imageViewRaw));
+        swapChainImageViews.push_back(std::move(imageViewRaw));
     }
 
     Vulkan vulkan(
         std::move(instance),
-        msg,
+        std::move(msg),
         std::move(deviceInfo.device),
         workQueue,
         std::move(surface),
@@ -155,16 +179,16 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
 }
 
 Vulkan::Vulkan(
-    VkInstancePtr instance,
-    VkDebugUtilsMessengerEXT msg,
-    VkDevicePtr device,
-    VkQueue workQueue,
-    VkSurfacePtr surface,
-    VkSwapchainPtr swapChain,
-    std::vector<VkImage> swapChainImages,
-    std::vector<VkImageViewPtr> swapChainImageViews)
+    vk::UniqueInstance instance,
+    vk::UniqueDebugUtilsMessengerEXT msg,
+    vk::UniqueDevice device,
+    vk::Queue workQueue,
+    vk::UniqueSurfaceKHR surface,
+    vk::UniqueSwapchainKHR swapChain,
+    std::vector<vk::Image> swapChainImages,
+    std::vector<vk::UniqueImageView> swapChainImageViews)
     : instance(std::move(instance))
-    , msg(msg)
+    , msg(std::move(msg))
     , device(std::move(device))
     , workQueue(workQueue)
     , surface(std::move(surface))
@@ -174,14 +198,7 @@ Vulkan::Vulkan(
 {
 }
 
-Vulkan::~Vulkan()
-{
-    // Moving an instance is allowed
-    if(auto destroy = vkGetInstanceProcAddrQ(instance, vkDestroyDebugUtilsMessengerEXT); destroy)
-    {
-        destroy(instance, msg, nullptr);
-    }
-}
+Vulkan::~Vulkan() {}
 
 VKAPI_ATTR VkBool32 VKAPI_CALL Vulkan::debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,

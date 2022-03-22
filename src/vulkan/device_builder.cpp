@@ -9,27 +9,24 @@ struct ValidatedExtension
     bool found;
 };
 
-VkResult visitExtensionProperties(
-    VkPhysicalDevice physicalDevice,
-    std::function<void(VkExtensionProperties)> visitor)
+vk::Result visitExtensionProperties(
+    vk::PhysicalDevice physicalDevice,
+    std::function<void(vk::ExtensionProperties)> visitor)
 {
-    uint32_t count = 0;
-    auto res = vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr);
-    if(res != VK_SUCCESS)
+    auto [res, properties] = physicalDevice.enumerateDeviceExtensionProperties();
+
+    if(res != vk::Result::eSuccess)
         return res;
 
-    std::vector<VkExtensionProperties> properties(count);
-    res = vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, properties.data());
-    if(res != VK_SUCCESS)
-        return res;
+    for(auto property : properties)
+        visitor(property);
 
-    for(uint32_t i = 0; i < count; ++i)
-        visitor(properties[i]);
-
-    return VK_SUCCESS;
+    return vk::Result::eSuccess;
 }
 
-DeviceBuilder::DeviceBuilder(const VkInstancePtr& instance, const VkSurfacePtr& surface)
+DeviceBuilder::DeviceBuilder(
+    const vk::UniqueInstance& instance,
+    const vk::UniqueSurfaceKHR& surface)
     : instance(instance)
     , surface(surface)
 {
@@ -73,45 +70,60 @@ DeviceBuilder::BuildType DeviceBuilder::build()
     requiredExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
     {
-        uint32_t count = 0;
-        vkEnumeratePhysicalDevices(instance, &count, nullptr);
-
-        std::vector<VkPhysicalDevice> devices(count);
-        auto res = vkEnumeratePhysicalDevices(instance, &count, devices.data());
-        if(res != VK_SUCCESS)
+        auto [res, physicalDevices] = instance->enumeratePhysicalDevices();
+        if(res != vk::Result::eSuccess)
         {
             error.type = ErrorType::EnumeratePhysicalDevices;
             error.EnumeratePhysicalDevices.result = res;
             return error;
         }
 
-        for(uint32_t i = 0; i < count; ++i)
+        for(auto device : physicalDevices)
         {
-            PhysicalDeviceInfo deviceInfo = {
-                .device = devices[i],
-                .properties = {},
-                .features = {},
-                .queueFamilyProperties = {},
-                .extensionProperties = {},
-                .surfaceFormats = {},
-                .presentModes = {},
-                .surfaceCapabilities = {},
-            };
-            vkGetPhysicalDeviceProperties(devices[i], &deviceInfo.properties);
-            vkGetPhysicalDeviceFeatures(devices[i], &deviceInfo.features);
+            auto [depRes, extensionProperties] = device.enumerateDeviceExtensionProperties();
+            if(depRes != vk::Result::eSuccess)
+            {
+                error.type = ErrorType::EnumeratePhysicalDevices;
+                error.EnumeratePhysicalDevices.result = depRes;
+                return error;
+            }
+            auto [sfRes, surfaceFormats] = device.getSurfaceFormatsKHR(surface.get());
+            if(sfRes != vk::Result::eSuccess)
+            {
+                error.type = ErrorType::NoSurfaceFormatFound;
+                error.NoSurfaceFormatFound.result = sfRes;
+                return error;
+            }
+            auto [pmRes, presentModes] = device.getSurfacePresentModesKHR(surface.get());
+            if(pmRes != vk::Result::eSuccess)
+            {
+                error.type = ErrorType::NoPresentModeFound;
+                error.NoPresentModeFound.result = pmRes;
+                return error;
+            }
+            auto [scRes, surfaceCapabilities] = device.getSurfaceCapabilitiesKHR(surface.get());
+            if(scRes != vk::Result::eSuccess)
+            {
+                error.type = ErrorType::NoSurfaceCapabilitiesFound;
+                error.NoSurfaceCapabilitiesFound.result = scRes;
+                return error;
+            }
 
-            uint32_t queueFamilyCount = 0;
-            vkGetPhysicalDeviceQueueFamilyProperties(deviceInfo.device, &queueFamilyCount, nullptr);
-            deviceInfo.queueFamilyProperties.resize(queueFamilyCount);
-            vkGetPhysicalDeviceQueueFamilyProperties(
-                deviceInfo.device,
-                &queueFamilyCount,
-                deviceInfo.queueFamilyProperties.data());
+            PhysicalDeviceInfo deviceInfo = {
+                .device = device,
+                .properties = device.getProperties(),
+                .features = device.getFeatures(),
+                .queueFamilyProperties = device.getQueueFamilyProperties(),
+                .extensionProperties = extensionProperties,
+                .surfaceFormats = surfaceFormats,
+                .presentModes = presentModes,
+                .surfaceCapabilities = surfaceCapabilities,
+            };
 
             bool hasSwapchainSupport = false;
             visitExtensionProperties(
                 deviceInfo.device,
-                [&deviceInfo, &hasSwapchainSupport](VkExtensionProperties prop) {
+                [&deviceInfo, &hasSwapchainSupport](vk::ExtensionProperties prop) {
                     deviceInfo.extensionProperties.push_back(prop);
                     if(std::strcmp(prop.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
                         hasSwapchainSupport = true;
@@ -120,40 +132,13 @@ DeviceBuilder::BuildType DeviceBuilder::build()
             if(!hasSwapchainSupport)
                 continue;
 
-            vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
-                deviceInfo.device,
-                surface,
-                &deviceInfo.surfaceCapabilities);
-
-            uint32_t formatCount;
-            vkGetPhysicalDeviceSurfaceFormatsKHR(deviceInfo.device, surface, &formatCount, nullptr);
-            deviceInfo.surfaceFormats.resize(formatCount);
-            vkGetPhysicalDeviceSurfaceFormatsKHR(
-                deviceInfo.device,
-                surface,
-                &formatCount,
-                deviceInfo.surfaceFormats.data());
-
-            uint32_t presentModeCount;
-            vkGetPhysicalDeviceSurfacePresentModesKHR(
-                deviceInfo.device,
-                surface,
-                &presentModeCount,
-                nullptr);
-            deviceInfo.presentModes.resize(presentModeCount);
-            vkGetPhysicalDeviceSurfacePresentModesKHR(
-                deviceInfo.device,
-                surface,
-                &presentModeCount,
-                deviceInfo.presentModes.data());
-
             if(deviceSelector)
             {
                 auto resultVar = deviceSelector(deviceOpt, deviceInfo);
-                if(std::holds_alternative<VkResult>(resultVar))
+                if(std::holds_alternative<vk::Result>(resultVar))
                 {
                     error.type = ErrorType::Fatal;
-                    error.Fatal.result = std::get<VkResult>(resultVar);
+                    error.Fatal.result = std::get<vk::Result>(resultVar);
                     error.Fatal.message = "Error during device selection";
                     return error;
                 }
@@ -165,18 +150,16 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 // presentation support and VK_KHR_SWAPCHAIN_EXTENSION
                 bool hasDiscrete = deviceOpt.has_value()
                                    && deviceOpt.value().properties.deviceType
-                                          == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+                                          == vk::PhysicalDeviceType::eDiscreteGpu;
 
-                VkBool32 supportPresent = false;
+                vk::Bool32 supportPresent = false;
                 for(auto [queueFamilyInfo, index] : Index(deviceInfo.queueFamilyProperties))
                 {
-                    auto res = vkGetPhysicalDeviceSurfaceSupportKHR(
-                        deviceInfo.device,
-                        index,
-                        surface,
-                        &supportPresent);
+                    auto [res, support] =
+                        deviceInfo.device.getSurfaceSupportKHR(index, surface.get());
+                    supportPresent = support;
 
-                    if(res != VK_SUCCESS)
+                    if(res != vk::Result::eSuccess)
                     {
                         error.type = ErrorType::Fatal;
                         error.Fatal.result = res;
@@ -197,7 +180,7 @@ DeviceBuilder::BuildType DeviceBuilder::build()
 
                 visitExtensionProperties(
                     deviceInfo.device,
-                    [&validatedExtensions](VkExtensionProperties prop) {
+                    [&validatedExtensions](vk::ExtensionProperties prop) {
                         for(auto [extension, index] : Index(validatedExtensions))
                         {
                             if(std::strcmp(extension.name, prop.extensionName) == 0)
@@ -219,9 +202,9 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 }
 
                 if(!hasDiscrete
-                   && (deviceInfo.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+                   && (deviceInfo.properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu
                        || deviceInfo.properties.deviceType
-                              == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
+                              == vk::PhysicalDeviceType::eIntegratedGpu)
                    && supportPresent && hasRequiredExtensions)
                 {
                     deviceOpt = deviceInfo;
@@ -244,10 +227,10 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         if(queueFamilySelector)
         {
             auto resultVar = queueFamilySelector(this->queueFamilyPropertiesOpt, info);
-            if(std::holds_alternative<VkResult>(resultVar))
+            if(std::holds_alternative<vk::Result>(resultVar))
             {
                 error.type = ErrorType::Fatal;
-                error.Fatal.result = std::get<VkResult>(resultVar);
+                error.Fatal.result = std::get<vk::Result>(resultVar);
                 error.Fatal.message = "Error during device selection";
                 return error;
             }
@@ -258,16 +241,13 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         {
             // Default selector selects the first one with VK_QUEUE_GRAPHICS_BIT and presentation
             // support
-            if(!queueFamilyPropertiesOpt.has_value() && prop.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            if(!queueFamilyPropertiesOpt.has_value()
+               && prop.queueFlags & vk::QueueFlagBits::eGraphics)
             {
-                VkBool32 supportPresent = false;
-                auto res = vkGetPhysicalDeviceSurfaceSupportKHR(
-                    physicalDeviceInfo.device,
-                    index,
-                    surface,
-                    &supportPresent);
+                auto [res, supportPresent] =
+                    physicalDeviceInfo.device.getSurfaceSupportKHR(index, surface.get());
 
-                if(res != VK_SUCCESS)
+                if(res != vk::Result::eSuccess)
                 {
                     error.type = ErrorType::Fatal;
                     error.Fatal.result = res;
@@ -291,19 +271,13 @@ DeviceBuilder::BuildType DeviceBuilder::build()
     auto queueFamilyProperties = queueFamilyPropertiesOpt.value();
 
     float queuePriority = 1.0f;
-    VkDeviceQueueCreateInfo queueInfo = {
-        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
+    vk::DeviceQueueCreateInfo queueInfo = {
         .queueFamilyIndex = queueFamilyProperties.index,
         .queueCount = 1,
         .pQueuePriorities = &queuePriority,
     };
 
-    VkDeviceCreateInfo deviceCreateInfo = {
-        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
+    vk::DeviceCreateInfo deviceCreateInfo = {
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &queueInfo,
         .enabledLayerCount = 0,
@@ -313,21 +287,19 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         .pEnabledFeatures = nullptr,
     };
 
-    VkDevice deviceRaw;
-    auto res = vkCreateDevice(physicalDeviceInfo.device, &deviceCreateInfo, nullptr, &deviceRaw);
-    if(res != VK_SUCCESS)
+    auto [cdRes, device] = physicalDeviceInfo.device.createDeviceUnique(deviceCreateInfo);
+    if(cdRes != vk::Result::eSuccess)
     {
         error.type = ErrorType::DeviceCreationError;
-        error.DeviceCreationError.result = res;
+        error.DeviceCreationError.result = cdRes;
         return error;
     }
-    VkDevicePtr device(deviceRaw);
 
     auto defaultSurfaceFormatSelector =
-        [](const PhysicalDeviceInfo& info) -> std::optional<VkSurfaceFormatKHR> {
+        [](const PhysicalDeviceInfo& info) -> std::optional<vk::SurfaceFormatKHR> {
         auto iter =
-            std::find_if(entire_collection(info.surfaceFormats), [](VkSurfaceFormatKHR format) {
-                return format.format == VK_FORMAT_B8G8R8A8_SRGB;
+            std::find_if(entire_collection(info.surfaceFormats), [](vk::SurfaceFormatKHR format) {
+                return format.format == vk::Format::eB8G8R8A8Srgb;
             });
 
         if(iter == info.surfaceFormats.end())
@@ -335,7 +307,7 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         else
             return *iter;
     };
-    std::optional<VkSurfaceFormatKHR> surfaceFormatOpt =
+    std::optional<vk::SurfaceFormatKHR> surfaceFormatOpt =
         (this->surfaceFormatSelector ? this->surfaceFormatSelector
                                      : defaultSurfaceFormatSelector)(physicalDeviceInfo);
     if(!surfaceFormatOpt.has_value())
@@ -343,13 +315,13 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         error.type = ErrorType::NoSurfaceFormatFound;
         return error;
     }
-    VkSurfaceFormatKHR surfaceFormat = surfaceFormatOpt.value();
+    vk::SurfaceFormatKHR surfaceFormat = surfaceFormatOpt.value();
 
     auto defaultPresentModeSelector =
-        [](const PhysicalDeviceInfo&) -> std::optional<VkPresentModeKHR> {
-        return VK_PRESENT_MODE_FIFO_KHR;
+        [](const PhysicalDeviceInfo&) -> std::optional<vk::PresentModeKHR> {
+        return vk::PresentModeKHR::eFifo;
     };
-    std::optional<VkPresentModeKHR> presentModeOpt =
+    std::optional<vk::PresentModeKHR> presentModeOpt =
         (this->presentModeSelector ? this->presentModeSelector
                                    : defaultPresentModeSelector)(physicalDeviceInfo);
     if(!presentModeOpt.has_value())
@@ -357,36 +329,31 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         error.type = ErrorType::NoPresentModeFound;
         return error;
     }
-    VkPresentModeKHR presentMode = presentModeOpt.value();
+    vk::PresentModeKHR presentMode = presentModeOpt.value();
 
-    VkSwapchainCreateInfoKHR swapChainCreateInfo = {
-        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-        .pNext = nullptr,
-        .flags = 0,
-        .surface = surface,
+    vk::SwapchainCreateInfoKHR swapChainCreateInfo = {
+        .surface = surface.get(),
         .minImageCount = physicalDeviceInfo.surfaceCapabilities.minImageCount + 1,
         .imageFormat = surfaceFormat.format,
         .imageColorSpace = surfaceFormat.colorSpace,
         .imageExtent = physicalDeviceInfo.surfaceCapabilities.currentExtent,
         .imageArrayLayers = 1,
-        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
+        .imageSharingMode = vk::SharingMode::eExclusive,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
         .preTransform = physicalDeviceInfo.surfaceCapabilities.currentTransform,
-        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
         .presentMode = presentMode,
         .clipped = VK_TRUE,
         .oldSwapchain = VK_NULL_HANDLE,
     };
-    VkSwapchainKHR swapChainRaw;
-    res = vkCreateSwapchainKHR(device, &swapChainCreateInfo, nullptr, &swapChainRaw);
-    VkSwapchainPtr swapChain(device, swapChainRaw);
 
-    if(res != VK_SUCCESS)
+    auto [csRes, swapChain] = device->createSwapchainKHRUnique(swapChainCreateInfo);
+    if(csRes != vk::Result::eSuccess)
     {
         error.type = ErrorType::SwapChainCreationError;
-        error.SwapChainCreationError.result = res;
+        error.SwapChainCreationError.result = csRes;
         return error;
     }
 

@@ -1,29 +1,28 @@
 #pragma once
 
 #include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 
 #include <functional>
 #include <optional>
 #include <variant>
 
-#include "smart_pointers.h"
-
 struct PhysicalDeviceInfo
 {
-    VkPhysicalDevice device;
-    VkPhysicalDeviceProperties properties;
-    VkPhysicalDeviceFeatures features;
-    std::vector<VkQueueFamilyProperties> queueFamilyProperties;
-    std::vector<VkExtensionProperties> extensionProperties;
-    std::vector<VkSurfaceFormatKHR> surfaceFormats;
-    std::vector<VkPresentModeKHR> presentModes;
-    VkSurfaceCapabilitiesKHR surfaceCapabilities;
+    vk::PhysicalDevice device;
+    vk::PhysicalDeviceProperties properties;
+    vk::PhysicalDeviceFeatures features;
+    std::vector<vk::QueueFamilyProperties> queueFamilyProperties;
+    std::vector<vk::ExtensionProperties> extensionProperties;
+    std::vector<vk::SurfaceFormatKHR> surfaceFormats;
+    std::vector<vk::PresentModeKHR> presentModes;
+    vk::SurfaceCapabilitiesKHR surfaceCapabilities;
 };
 
 struct QueueFamilyInfo
 {
     uint32_t index;
-    VkQueueFamilyProperties properties;
+    vk::QueueFamilyProperties properties;
 };
 
 class DeviceBuilder
@@ -36,8 +35,9 @@ class DeviceBuilder
         NoPhysicalDeviceFound,
         NoQueueFamilyFound,
         DeviceCreationError,
-        NoSurfaceFormatFound,
+        NoSurfaceFormatFound, // These "NoXFound" can probably be under a "out of memory" umbrella
         NoPresentModeFound,
+        NoSurfaceCapabilitiesFound,
         SwapChainCreationError,
         Fatal, // Something unspecified happened but we can't continue
     };
@@ -49,19 +49,31 @@ class DeviceBuilder
         {
             struct
             {
-                VkResult result;
+                vk::Result result;
             } EnumeratePhysicalDevices;
             struct
             {
-                VkResult result;
+                vk::Result result;
             } DeviceCreationError;
             struct
             {
-                VkResult result;
+                vk::Result result;
+            } NoSurfaceFormatFound;
+            struct
+            {
+                vk::Result result;
+            } NoPresentModeFound;
+            struct
+            {
+                vk::Result result;
+            } NoSurfaceCapabilitiesFound;
+            struct
+            {
+                vk::Result result;
             } SwapChainCreationError;
             struct
             {
-                VkResult result;
+                vk::Result result;
                 const char* message;
             } Fatal;
         };
@@ -69,27 +81,27 @@ class DeviceBuilder
 
     struct Data
     {
-        VkDevicePtr device;
-        VkSwapchainPtr swapChain;
+        vk::UniqueDevice device;
+        vk::UniqueSwapchainKHR swapChain;
         PhysicalDeviceInfo physicalDeviceInfo;
         QueueFamilyInfo queueFamilyProperties;
     };
 
     // If an error occurs, nothing should be returned. This is mainly supported because some
     // functions like vkGetPhysicalDeviceSurfaceSupportKHR might return an error
-    using DeviceSelector = std::function<std::variant<bool, VkResult>(
+    using DeviceSelector = std::function<std::variant<bool, vk::Result>(
         const std::optional<PhysicalDeviceInfo>&,
         const PhysicalDeviceInfo&)>;
-    using QueueFamilySelector = std::function<std::variant<bool, VkResult>(
+    using QueueFamilySelector = std::function<std::variant<bool, vk::Result>(
         const std::optional<QueueFamilyInfo>&,
         const QueueFamilyInfo&)>;
     using SurfaceFormatSelector =
-        std::function<std::optional<VkSurfaceFormatKHR>(const PhysicalDeviceInfo&)>;
+        std::function<std::optional<vk::SurfaceFormatKHR>(const PhysicalDeviceInfo&)>;
     using PresentModeSelector =
-        std::function<std::optional<VkPresentModeKHR>(const PhysicalDeviceInfo&)>;
+        std::function<std::optional<vk::PresentModeKHR>(const PhysicalDeviceInfo&)>;
     using BuildType = std::variant<Data, Error>;
 
-    DeviceBuilder(const VkInstancePtr& instance, const VkSurfacePtr& surface);
+    DeviceBuilder(const vk::UniqueInstance& instance, const vk::UniqueSurfaceKHR& surface);
     DeviceBuilder& selectDevice(DeviceSelector selector);
     DeviceBuilder& selectQueueFamily(QueueFamilySelector selector);
     DeviceBuilder& selectSurfaceFormat(SurfaceFormatSelector selector);
@@ -100,8 +112,8 @@ class DeviceBuilder
     BuildType build();
 
   private:
-    const VkInstancePtr& instance;
-    const VkSurfacePtr& surface;
+    const vk::UniqueInstance& instance;
+    const vk::UniqueSurfaceKHR& surface;
 
     std::vector<const char*> requiredExtensions;
 

@@ -2,8 +2,7 @@
 
 #include <variant>
 #include <vulkan/vulkan.hpp>
-
-#include "smart_pointers.h"
+#include <vulkan/vulkan_raii.hpp>
 
 struct GLFWwindow;
 
@@ -36,12 +35,12 @@ class Vulkan
             struct
             {
                 const char* instanceProc;
-                VkResult result;
+                vk::Result result;
             } InstanceProcAddrError;
             struct
             {
                 const char* message;
-                VkResult result;
+                vk::Result result;
             } OutOfMemory;
         };
     };
@@ -54,9 +53,7 @@ class Vulkan
 
   private:
     // Placed here for reference
-    constexpr static VkApplicationInfo APP_INFO = {
-        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pNext = nullptr,
+    constexpr static vk::ApplicationInfo APP_INFO = {
         .pApplicationName = "Vulkan test",
         .applicationVersion = VK_MAKE_API_VERSION(0, 0, 1, 0),
         .pEngineName = "??",
@@ -73,23 +70,23 @@ class Vulkan
     // Constructed through Vulkan::createVulkan
     // The parameter list might be getting a bit long...
     Vulkan(
-        VkInstancePtr instance,
-        VkDebugUtilsMessengerEXT msg,
-        VkDevicePtr device,
-        VkQueue workQueue,
-        VkSurfacePtr surface,
-        VkSwapchainPtr swapChain,
-        std::vector<VkImage> swapChainImages,
-        std::vector<VkImageViewPtr> swapChainImageViews);
+        vk::UniqueInstance instance,
+        vk::UniqueDebugUtilsMessengerEXT msg,
+        vk::UniqueDevice device,
+        vk::Queue workQueue,
+        vk::UniqueSurfaceKHR surface,
+        vk::UniqueSwapchainKHR swapChain,
+        std::vector<vk::Image> swapChainImages,
+        std::vector<vk::UniqueImageView> swapChainImageViews);
 
     // Don't touch the order or deinitialization will not work as intended
-    VkInstancePtr instance;
-    VkDebugUtilsMessengerEXT msg;
-    VkDevicePtr device;
-    VkQueue workQueue;
-    VkSurfacePtr surface;
-    VkSwapchainPtr swapChain;
+    vk::UniqueInstance instance;
+    vk::UniqueDebugUtilsMessengerEXT msg;
+    vk::UniqueDevice device;
+    vk::Queue workQueue;
+    vk::UniqueSurfaceKHR surface;
+    vk::UniqueSwapchainKHR swapChain;
 
-    std::vector<VkImage> swapChainImages;
-    std::vector<VkImageViewPtr> swapChainImageViews;
+    std::vector<vk::Image> swapChainImages;
+    std::vector<vk::UniqueImageView> swapChainImageViews;
 };

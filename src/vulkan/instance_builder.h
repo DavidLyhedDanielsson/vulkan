@@ -7,8 +7,6 @@
 #include <variant>
 #include <vector>
 
-#include "smart_pointers.h"
-
 struct Layer
 {
     const char* name;
@@ -38,16 +36,16 @@ class InstanceBuilder
             } RequiredLayerMissing;
             struct
             {
-                VkResult result;
+                vk::Result result;
             } InstanceCreationError;
             struct
             {
-                VkResult result;
+                vk::Result result;
             } EnumerateInstanceLayerProperties;
         };
     };
 
-    using BuildType = std::variant<VkInstancePtr, Error>;
+    using BuildType = std::variant<vk::UniqueInstance, Error>;
 
     InstanceBuilder();
     InstanceBuilder& withApplicationVersion(
@@ -67,7 +65,7 @@ class InstanceBuilder
     BuildType build();
 
   private:
-    VkApplicationInfo applicationInfo;
+    vk::ApplicationInfo applicationInfo;
     std::vector<Layer> layers;
     std::vector<const char*> requiredExtensions;
 };
