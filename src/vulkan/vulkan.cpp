@@ -32,7 +32,7 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyDebugUtilsMessengerEXT(
     return pfnVkDestroyDebugUtilsMessengerEXT(instance, messenger, pAllocator);
 }
 
-Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
+Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle, vk::Format backbufferFormat)
 {
     Error error = {};
 
@@ -107,7 +107,23 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
     vk::UniqueSurfaceKHR surface(surfaceRaw, instance.get());
 
     // Defaults are fine for now
-    auto deviceVar = DeviceBuilder(instance, surface).build();
+    auto deviceVar =
+        DeviceBuilder(instance, surface)
+            .selectSurfaceFormat(
+                [backbufferFormat](
+                    const PhysicalDeviceInfo& info) -> std::optional<vk::SurfaceFormatKHR> {
+                    auto iter = std::find_if(
+                        entire_collection(info.surfaceFormats),
+                        [backbufferFormat](vk::SurfaceFormatKHR format) {
+                            return format.format == backbufferFormat;
+                        });
+
+                    if(iter == info.surfaceFormats.end())
+                        return std::nullopt;
+                    else
+                        return *iter;
+                })
+            .build();
 
     if(std::holds_alternative<DeviceBuilder::Error>(deviceVar))
     {
@@ -135,7 +151,7 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
         vk::ImageViewCreateInfo imageCreateInfo = {
             .image = image,
             .viewType = vk::ImageViewType::e2D,
-            .format = vk::Format::eB8G8R8A8Srgb, // TODO
+            .format = backbufferFormat,
             .components =
                 {
                     .r = vk::ComponentSwizzle::eIdentity,
@@ -173,7 +189,9 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle)
         std::move(surface),
         std::move(deviceInfo.swapChain),
         std::move(swapChainImages),
-        std::move(swapChainImageViews));
+        std::move(swapChainImageViews),
+        std::move(deviceInfo.physicalDeviceInfo),
+        std::move(deviceInfo.queueFamilyProperties));
 
     return vulkan;
 }
@@ -186,7 +204,9 @@ Vulkan::Vulkan(
     vk::UniqueSurfaceKHR surface,
     vk::UniqueSwapchainKHR swapChain,
     std::vector<vk::Image> swapChainImages,
-    std::vector<vk::UniqueImageView> swapChainImageViews)
+    std::vector<vk::UniqueImageView> swapChainImageViews,
+    PhysicalDeviceInfo physicalDeviceInfo,
+    QueueFamilyInfo queueFamilyProperties)
     : instance(std::move(instance))
     , msg(std::move(msg))
     , device(std::move(device))
@@ -195,6 +215,8 @@ Vulkan::Vulkan(
     , swapChain(std::move(swapChain))
     , swapChainImages(std::move(swapChainImages))
     , swapChainImageViews(std::move(swapChainImageViews))
+    , physicalDeviceInfo(std::move(physicalDeviceInfo))
+    , queueFamilyProperties(std::move(queueFamilyProperties))
 {
 }
 
@@ -206,5 +228,8 @@ VKAPI_ATTR VkBool32 VKAPI_CALL Vulkan::debugCallback(
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData)
 {
+    if(messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT)
+        return VK_FALSE;
+
     return VK_FALSE;
 }

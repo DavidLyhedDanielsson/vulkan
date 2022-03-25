@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 
+
 class Window
 {
     friend std::optional<Window> createWindow(int, int, const char*);

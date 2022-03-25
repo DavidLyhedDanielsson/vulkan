@@ -4,6 +4,8 @@
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
+#include "device_builder.h"
+
 struct GLFWwindow;
 
 class Vulkan
@@ -46,7 +48,7 @@ class Vulkan
     };
 
     using CreateType = std::variant<Vulkan, Error>;
-    static CreateType createVulkan(GLFWwindow* windowHandle);
+    static CreateType createVulkan(GLFWwindow* windowHandle, vk::Format backbufferFormat);
 
     ~Vulkan();
     Vulkan(Vulkan&&) = default;
@@ -77,8 +79,11 @@ class Vulkan
         vk::UniqueSurfaceKHR surface,
         vk::UniqueSwapchainKHR swapChain,
         std::vector<vk::Image> swapChainImages,
-        std::vector<vk::UniqueImageView> swapChainImageViews);
+        std::vector<vk::UniqueImageView> swapChainImageViews,
+        PhysicalDeviceInfo physicalDeviceInfo,
+        QueueFamilyInfo queueFamilyProperties);
 
+  public:
     // Don't touch the order or deinitialization will not work as intended
     vk::UniqueInstance instance;
     vk::UniqueDebugUtilsMessengerEXT msg;
@@ -89,4 +94,7 @@ class Vulkan
 
     std::vector<vk::Image> swapChainImages;
     std::vector<vk::UniqueImageView> swapChainImageViews;
+
+    PhysicalDeviceInfo physicalDeviceInfo;
+    QueueFamilyInfo queueFamilyProperties;
 };
