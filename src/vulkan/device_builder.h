@@ -119,12 +119,15 @@ class DeviceBuilder
     DeviceBuilder& selectPresentMode(PresentModeSelector selector);
 
     DeviceBuilder& withRequiredExtension(const char* name);
+    DeviceBuilder& withNumberOfBackbuffers(uint32_t backbufferCount);
 
     BuildType build();
 
   private:
     const vk::UniqueInstance& instance;
     const vk::UniqueSurfaceKHR& surface;
+
+    std::optional<uint32_t> backbufferCount;
 
     std::vector<const char*> requiredExtensions;
 

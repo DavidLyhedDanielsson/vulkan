@@ -71,6 +71,12 @@ DeviceBuilder& DeviceBuilder::withRequiredExtension(const char* name)
     return *this;
 }
 
+DeviceBuilder& DeviceBuilder::withNumberOfBackbuffers(uint32_t backbufferCount)
+{
+    this->backbufferCount = backbufferCount;
+    return *this;
+}
+
 DeviceBuilder::BuildType DeviceBuilder::build()
 {
     Error error = {};
@@ -363,7 +369,8 @@ DeviceBuilder::BuildType DeviceBuilder::build()
 
     vk::SwapchainCreateInfoKHR swapChainCreateInfo = {
         .surface = surface.get(),
-        .minImageCount = physicalDeviceInfo.surfaceCapabilities.minImageCount + 1,
+        .minImageCount =
+            backbufferCount.value_or(physicalDeviceInfo.surfaceCapabilities.minImageCount),
         .imageFormat = surfaceFormat.format,
         .imageColorSpace = surfaceFormat.colorSpace,
         .imageExtent = physicalDeviceInfo.surfaceCapabilities.currentExtent,

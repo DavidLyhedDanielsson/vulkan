@@ -127,6 +127,7 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle, const Config& 
                     else
                         return *iter;
                 })
+            .withNumberOfBackbuffers(config.backbufferCount)
             .build();
 
     if(std::holds_alternative<DeviceBuilder::Error>(deviceVar))

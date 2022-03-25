@@ -74,6 +74,7 @@ int main()
         framebuffers.push_back(std::move(framebuffer));
     }
 
+    // Command buffers
     auto [ccpRes, commandPool] = vulkan.device->createCommandPoolUnique({
         .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
         .queueFamilyIndex = vulkan.queueFamilyProperties.index,
@@ -83,40 +84,53 @@ int main()
     auto [acbRes, commandBuffers] = vulkan.device->allocateCommandBuffersUnique({
         .commandPool = commandPool.get(),
         .level = vk::CommandBufferLevel::ePrimary,
-        .commandBufferCount = 1,
+        .commandBufferCount = 3,
     });
     assert(acbRes == vk::Result::eSuccess);
 
-    auto commandBuffer = std::move(commandBuffers[0]);
+    // Sync
+    std::vector<vk::UniqueSemaphore> imageAvailableList(config.backbufferCount);
+    std::vector<vk::UniqueSemaphore> renderFinishedList(config.backbufferCount);
+    std::vector<vk::UniqueFence> fences(config.backbufferCount);
+    for(uint32_t i = 0; i < config.backbufferCount; ++i)
+    {
+        auto [iasRes, imageAvailable] = vulkan.device->createSemaphoreUnique({});
+        assert(iasRes == vk::Result::eSuccess);
+        imageAvailableList[i] = std::move(imageAvailable);
 
-    vk::ClearValue clearValue = {std::array<float, 4>({0.0f, 0.0f, 0.0f, 1.0f})};
+        auto [rfsRes, renderFinished] = vulkan.device->createSemaphoreUnique({});
+        assert(rfsRes == vk::Result::eSuccess);
+        renderFinishedList[i] = std::move(renderFinished);
 
-    auto [iasRes, imageAvailable] = vulkan.device->createSemaphoreUnique({});
-    assert(iasRes == vk::Result::eSuccess);
-    auto [rfsRes, renderFinished] = vulkan.device->createSemaphoreUnique({});
-    assert(rfsRes == vk::Result::eSuccess);
-    auto [fRes, fence] =
-        vulkan.device->createFenceUnique({.flags = vk::FenceCreateFlagBits::eSignaled});
-    assert(fRes == vk::Result::eSuccess);
+        auto [fRes, fence] = vulkan.device->createFenceUnique({
+            .flags = vk::FenceCreateFlagBits::eSignaled,
+        });
+        assert(fRes == vk::Result::eSuccess);
+        fences[i] = std::move(fence);
+    }
 
-    // uint32_t swapChainImage = 0;
+    uint32_t frame = 0;
+    uint32_t backbufferFrame = 0;
     while(!mainWindow.shouldClose())
     {
         mainWindow.pollEvents();
 
-        auto wffRes = vulkan.device->waitForFences(fence.get(), true, UINT64_MAX);
+        auto wffRes = vulkan.device->waitForFences(fences[backbufferFrame].get(), true, UINT64_MAX);
         assert(wffRes == vk::Result::eSuccess);
-        vulkan.device->resetFences(fence.get());
+        vulkan.device->resetFences(fences[backbufferFrame].get());
 
         auto [acnRes, swapChainImageIndex] = vulkan.device->acquireNextImageKHR(
             vulkan.swapChain.get(),
             UINT64_MAX,
-            imageAvailable.get(),
+            imageAvailableList[backbufferFrame].get(),
             VK_NULL_HANDLE);
 
+        auto& commandBuffer = commandBuffers[backbufferFrame];
         commandBuffer->reset();
         vk::CommandBufferBeginInfo beginInfo = {};
         assert(commandBuffer->begin(beginInfo) == vk::Result::eSuccess);
+
+        vk::ClearValue clearValue = {std::array<float, 4>({0.0f, 0.0f, 0.0f, 1.0f})};
         commandBuffer->beginRenderPass(
             {
                 .renderPass = pipeline.renderPass.get(),
@@ -138,19 +152,19 @@ int main()
             vulkan.workQueue.submit(
                 {{
                     .waitSemaphoreCount = 1,
-                    .pWaitSemaphores = &imageAvailable.get(),
+                    .pWaitSemaphores = &imageAvailableList[backbufferFrame].get(),
                     .pWaitDstStageMask = waitDstStageMask,
                     .commandBufferCount = 1,
                     .pCommandBuffers = &commandBuffer.get(),
                     .signalSemaphoreCount = 1,
-                    .pSignalSemaphores = &renderFinished.get(),
+                    .pSignalSemaphores = &renderFinishedList[backbufferFrame].get(),
                 }},
-                fence.get())
+                fences[backbufferFrame].get())
             == vk::Result::eSuccess);
 
         vk::PresentInfoKHR presentInfo = {
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &renderFinished.get(),
+            .pWaitSemaphores = &renderFinishedList[backbufferFrame].get(),
             .swapchainCount = 1,
             .pSwapchains = &vulkan.swapChain.get(),
             .pImageIndices = &swapChainImageIndex,
@@ -158,6 +172,9 @@ int main()
         };
 
         assert(vulkan.workQueue.presentKHR(presentInfo) == vk::Result::eSuccess);
+
+        frame++;
+        backbufferFrame = frame % config.backbufferCount;
     }
 
     assert(vulkan.device->waitIdle() == vk::Result::eSuccess);
