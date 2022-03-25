@@ -92,6 +92,9 @@ class DeviceBuilder
     using DeviceSelector = std::function<std::variant<bool, vk::Result>(
         const std::optional<PhysicalDeviceInfo>&,
         const PhysicalDeviceInfo&)>;
+    using DeviceSelectorAfterFiltering = std::function<std::variant<bool, vk::Result>(
+        const std::optional<PhysicalDeviceInfo>&,
+        const PhysicalDeviceInfo&)>;
     using QueueFamilySelector = std::function<std::variant<bool, vk::Result>(
         const std::optional<QueueFamilyInfo>&,
         const QueueFamilyInfo&)>;
@@ -103,6 +106,14 @@ class DeviceBuilder
 
     DeviceBuilder(const vk::UniqueInstance& instance, const vk::UniqueSurfaceKHR& surface);
     DeviceBuilder& selectDevice(DeviceSelector selector);
+    /**
+     * Runs the default device selector to find a device with present and swapchain support, then
+     * runs this function.
+     *
+     * Can not be used at the same time as selectDevice since this is just a filter operation after
+     * DeviceSelector, so the filter can just be coded into the DeviceSelector.
+     */
+    DeviceBuilder& selectGpuWithRenderSupport(DeviceSelectorAfterFiltering selector);
     DeviceBuilder& selectQueueFamily(QueueFamilySelector selector);
     DeviceBuilder& selectSurfaceFormat(SurfaceFormatSelector selector);
     DeviceBuilder& selectPresentMode(PresentModeSelector selector);
@@ -118,6 +129,7 @@ class DeviceBuilder
     std::vector<const char*> requiredExtensions;
 
     DeviceSelector deviceSelector;
+    DeviceSelectorAfterFiltering gpuSelector;
     QueueFamilySelector queueFamilySelector;
     SurfaceFormatSelector surfaceFormatSelector;
     PresentModeSelector presentModeSelector;

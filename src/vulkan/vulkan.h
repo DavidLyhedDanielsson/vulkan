@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
+#include "../config.h"
 #include "device_builder.h"
 
 struct GLFWwindow;
@@ -48,7 +49,7 @@ class Vulkan
     };
 
     using CreateType = std::variant<Vulkan, Error>;
-    static CreateType createVulkan(GLFWwindow* windowHandle, vk::Format backbufferFormat);
+    static CreateType createVulkan(GLFWwindow* windowHandle, const Config& config);
 
     ~Vulkan();
     Vulkan(Vulkan&&) = default;

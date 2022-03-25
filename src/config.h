@@ -8,4 +8,5 @@ struct Config
     uint32_t resolutionHeight;
     vk::Format backbufferFormat;
     vk::SampleCountFlagBits sampleCount;
+    uint32_t backbufferCount;
 };

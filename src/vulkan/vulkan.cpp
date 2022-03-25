@@ -6,6 +6,7 @@
 
 #include "../stl_utils.h"
 
+#include "../config.h"
 #include "device_builder.h"
 #include "instance_builder.h"
 
@@ -32,7 +33,7 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyDebugUtilsMessengerEXT(
     return pfnVkDestroyDebugUtilsMessengerEXT(instance, messenger, pAllocator);
 }
 
-Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle, vk::Format backbufferFormat)
+Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle, const Config& config)
 {
     Error error = {};
 
@@ -106,16 +107,19 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle, vk::Format bac
     }
     vk::UniqueSurfaceKHR surface(surfaceRaw, instance.get());
 
-    // Defaults are fine for now
     auto deviceVar =
         DeviceBuilder(instance, surface)
+            .selectGpuWithRenderSupport(
+                [config](std::optional<PhysicalDeviceInfo>, const PhysicalDeviceInfo& potential)
+                    -> std::variant<bool, vk::Result> {
+                    return potential.surfaceCapabilities.maxImageCount >= config.backbufferCount;
+                })
             .selectSurfaceFormat(
-                [backbufferFormat](
-                    const PhysicalDeviceInfo& info) -> std::optional<vk::SurfaceFormatKHR> {
+                [config](const PhysicalDeviceInfo& info) -> std::optional<vk::SurfaceFormatKHR> {
                     auto iter = std::find_if(
                         entire_collection(info.surfaceFormats),
-                        [backbufferFormat](vk::SurfaceFormatKHR format) {
-                            return format.format == backbufferFormat;
+                        [config](vk::SurfaceFormatKHR format) {
+                            return format.format == config.backbufferFormat;
                         });
 
                     if(iter == info.surfaceFormats.end())
@@ -151,7 +155,7 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle, vk::Format bac
         vk::ImageViewCreateInfo imageCreateInfo = {
             .image = image,
             .viewType = vk::ImageViewType::e2D,
-            .format = backbufferFormat,
+            .format = config.backbufferFormat,
             .components =
                 {
                     .r = vk::ComponentSwizzle::eIdentity,

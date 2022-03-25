@@ -21,6 +21,7 @@ int main()
         .resolutionHeight = 720,
         .backbufferFormat = vk::Format::eB8G8R8A8Srgb,
         .sampleCount = vk::SampleCountFlagBits::e1,
+        .backbufferCount = 3,
     };
 
     // Create window
@@ -32,7 +33,7 @@ int main()
     Window mainWindow = std::move(mainWindowOpt.value());
 
     // Create vulkan instances
-    auto vulkanVar = Vulkan::createVulkan(mainWindow.getWindowHandle(), config.backbufferFormat);
+    auto vulkanVar = Vulkan::createVulkan(mainWindow.getWindowHandle(), config);
     assert(!std::holds_alternative<Vulkan::Error>(vulkanVar));
     auto vulkan = std::get<Vulkan>(std::move(vulkanVar));
 

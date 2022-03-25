@@ -34,7 +34,16 @@ DeviceBuilder::DeviceBuilder(
 
 DeviceBuilder& DeviceBuilder::selectDevice(DeviceSelector selector)
 {
+    assert(!this->gpuSelector); // TOOD: Error handling
     this->deviceSelector = selector;
+    return *this;
+}
+
+DeviceBuilder& DeviceBuilder::selectGpuWithRenderSupport(
+    DeviceBuilder::DeviceSelectorAfterFiltering selector)
+{
+    assert(!this->deviceSelector); // TOOD: Error handling
+    this->gpuSelector = selector;
     return *this;
 }
 
@@ -142,7 +151,10 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                     error.Fatal.message = "Error during device selection";
                     return error;
                 }
-                deviceOpt = deviceInfo;
+                if(std::get<bool>(resultVar))
+                {
+                    deviceOpt = deviceInfo;
+                }
             }
             else
             {
@@ -207,7 +219,25 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                               == vk::PhysicalDeviceType::eIntegratedGpu)
                    && supportPresent && hasRequiredExtensions)
                 {
-                    deviceOpt = deviceInfo;
+                    if(gpuSelector)
+                    {
+                        auto resultVar = gpuSelector(deviceOpt, deviceInfo);
+                        if(std::holds_alternative<vk::Result>(resultVar))
+                        {
+                            error.type = ErrorType::Fatal;
+                            error.Fatal.result = std::get<vk::Result>(resultVar);
+                            error.Fatal.message = "Error during device selection";
+                            return error;
+                        }
+                        if(std::get<bool>(resultVar))
+                        {
+                            deviceOpt = deviceInfo;
+                        }
+                    }
+                    else
+                    {
+                        deviceOpt = deviceInfo;
+                    }
                 }
             }
         }
