@@ -13,6 +13,13 @@ Pipeline::Pipeline(
 }
 Pipeline::~Pipeline() = default;
 
+void Pipeline::release()
+{
+    pipeline.release();
+    pipelineLayout.release();
+    renderPass.release();
+}
+
 using Builder = Pipeline::Builder;
 
 Builder& Builder::usingShaderRegistry(const ShaderRegistry& registry)

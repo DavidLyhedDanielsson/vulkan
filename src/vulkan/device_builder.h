@@ -12,11 +12,11 @@ struct PhysicalDeviceInfo
     vk::PhysicalDevice device;
     vk::PhysicalDeviceProperties properties;
     vk::PhysicalDeviceFeatures features;
+    vk::SurfaceCapabilitiesKHR surfaceCapabilities;
     std::vector<vk::QueueFamilyProperties> queueFamilyProperties;
     std::vector<vk::ExtensionProperties> extensionProperties;
     std::vector<vk::SurfaceFormatKHR> surfaceFormats;
     std::vector<vk::PresentModeKHR> presentModes;
-    vk::SurfaceCapabilitiesKHR surfaceCapabilities;
 };
 
 struct QueueFamilyInfo
@@ -70,10 +70,6 @@ class DeviceBuilder
             struct
             {
                 vk::Result result;
-            } SwapChainCreationError;
-            struct
-            {
-                vk::Result result;
                 const char* message;
             } Fatal;
         };
@@ -82,7 +78,6 @@ class DeviceBuilder
     struct Data
     {
         vk::UniqueDevice device;
-        vk::UniqueSwapchainKHR swapChain;
         PhysicalDeviceInfo physicalDeviceInfo;
         QueueFamilyInfo queueFamilyProperties;
     };
@@ -98,10 +93,6 @@ class DeviceBuilder
     using QueueFamilySelector = std::function<std::variant<bool, vk::Result>(
         const std::optional<QueueFamilyInfo>&,
         const QueueFamilyInfo&)>;
-    using SurfaceFormatSelector =
-        std::function<std::optional<vk::SurfaceFormatKHR>(const PhysicalDeviceInfo&)>;
-    using PresentModeSelector =
-        std::function<std::optional<vk::PresentModeKHR>(const PhysicalDeviceInfo&)>;
     using BuildType = std::variant<Data, Error>;
 
     DeviceBuilder(const vk::UniqueInstance& instance, const vk::UniqueSurfaceKHR& surface);
@@ -115,8 +106,7 @@ class DeviceBuilder
      */
     DeviceBuilder& selectGpuWithRenderSupport(DeviceSelectorAfterFiltering selector);
     DeviceBuilder& selectQueueFamily(QueueFamilySelector selector);
-    DeviceBuilder& selectSurfaceFormat(SurfaceFormatSelector selector);
-    DeviceBuilder& selectPresentMode(PresentModeSelector selector);
+    // DeviceBuilder& selectPresentMode(PresentModeSelector selector);
 
     DeviceBuilder& withRequiredExtension(const char* name);
     DeviceBuilder& withNumberOfBackbuffers(uint32_t backbufferCount);
@@ -127,15 +117,15 @@ class DeviceBuilder
     const vk::UniqueInstance& instance;
     const vk::UniqueSurfaceKHR& surface;
 
-    std::optional<uint32_t> backbufferCount;
+    // std::optional<uint32_t> backbufferCount;
 
     std::vector<const char*> requiredExtensions;
 
     DeviceSelector deviceSelector;
     DeviceSelectorAfterFiltering gpuSelector;
     QueueFamilySelector queueFamilySelector;
-    SurfaceFormatSelector surfaceFormatSelector;
-    PresentModeSelector presentModeSelector;
+    // SurfaceFormatSelector surfaceFormatSelector;
+    // PresentModeSelector presentModeSelector;
 
     std::optional<PhysicalDeviceInfo> deviceOpt;
     std::optional<QueueFamilyInfo> queueFamilyPropertiesOpt;

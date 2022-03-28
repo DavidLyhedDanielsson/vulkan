@@ -5,12 +5,18 @@
 
 #include "config.h"
 #include "shader_registry.h"
-//#include "vulkan/pipeline.h"
 #include "vulkan/pipeline.h"
+#include "vulkan/swapchain.h"
 #include "vulkan/vulkan.h"
 #include "window.h"
 
 #include "shader_paths.h"
+
+struct WindowSize
+{
+    uint32_t width;
+    uint32_t height;
+};
 
 int main()
 {
@@ -24,16 +30,20 @@ int main()
         .backbufferCount = 3,
     };
 
-    // Create window
+    //  Create window
+    std::optional<WindowSize> windowResized;
     auto mainWindowOpt = Window::createWindow(
         (int)config.resolutionWidth,
         (int)config.resolutionHeight,
-        "Vulkan window");
+        "Vulkan window",
+        [&windowResized](uint32_t width, uint32_t height) {
+            windowResized = {width, height};
+        });
     assert(mainWindowOpt.has_value());
-    Window mainWindow = std::move(mainWindowOpt.value());
+    std::unique_ptr<Window> mainWindow = std::move(mainWindowOpt.value());
 
     // Create vulkan instances
-    auto vulkanVar = Vulkan::createVulkan(mainWindow.getWindowHandle(), config);
+    auto vulkanVar = Vulkan::Builder(config, *mainWindow).build();
     assert(!std::holds_alternative<Vulkan::Error>(vulkanVar));
     auto vulkan = std::get<Vulkan>(std::move(vulkanVar));
 
@@ -57,24 +67,15 @@ int main()
             .withBlendState(Pipeline::Builder::Blend::Disabled)
             .build();
 
-    std::vector<vk::UniqueFramebuffer> framebuffers;
-    for(const auto& swapchainImageView : vulkan.swapChainImageViews)
-    {
-        vk::FramebufferCreateInfo framebufferCreateInfo = {
-            .renderPass = pipeline.renderPass.get(),
-            .attachmentCount = 1,
-            .pAttachments = &swapchainImageView.get(),
-            .width = config.resolutionWidth,
-            .height = config.resolutionHeight,
-            .layers = 1,
-        };
-
-        auto [cfRes, framebuffer] = vulkan.device->createFramebufferUnique(framebufferCreateInfo);
-        assert(cfRes == vk::Result::eSuccess);
-        framebuffers.push_back(std::move(framebuffer));
-    }
-
+    auto swapchainVar = Swapchain::Builder(config, vulkan.surface, vulkan.device)
+                            .withBackbufferFormat(vulkan.surfaceFormat.format)
+                            .withColorSpace(vulkan.surfaceFormat.colorSpace)
+                            .createFramebuffersFor(pipeline.renderPass)
+                            .build();
+    assert(!std::holds_alternative<Swapchain::Builder::Error>(swapchainVar));
+    auto swapchain = std::get<Swapchain>(std::move(swapchainVar));
     // Command buffers
+
     auto [ccpRes, commandPool] = vulkan.device->createCommandPoolUnique({
         .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
         .queueFamilyIndex = vulkan.queueFamilyProperties.index,
@@ -111,16 +112,25 @@ int main()
 
     uint32_t frame = 0;
     uint32_t backbufferFrame = 0;
-    while(!mainWindow.shouldClose())
+    while(!mainWindow->shouldClose())
     {
-        mainWindow.pollEvents();
+        mainWindow->pollEvents();
+
+        if(windowResized.has_value())
+        {
+            auto [newWidth, newHeight] = windowResized.value();
+
+            assert(vulkan.device->waitIdle() == vk::Result::eSuccess);
+
+            pipeline.release();
+        }
 
         auto wffRes = vulkan.device->waitForFences(fences[backbufferFrame].get(), true, UINT64_MAX);
         assert(wffRes == vk::Result::eSuccess);
         vulkan.device->resetFences(fences[backbufferFrame].get());
 
-        auto [acnRes, swapChainImageIndex] = vulkan.device->acquireNextImageKHR(
-            vulkan.swapChain.get(),
+        auto [acnRes, swapchainImageIndex] = vulkan.device->acquireNextImageKHR(
+            swapchain.swapchain.get(),
             UINT64_MAX,
             imageAvailableList[backbufferFrame].get(),
             VK_NULL_HANDLE);
@@ -134,7 +144,7 @@ int main()
         commandBuffer->beginRenderPass(
             {
                 .renderPass = pipeline.renderPass.get(),
-                .framebuffer = framebuffers[swapChainImageIndex].get(),
+                .framebuffer = swapchain.framebuffers[swapchainImageIndex].get(),
                 .renderArea = pipeline.renderArea,
                 .clearValueCount = 1,
                 .pClearValues = &clearValue,
@@ -166,8 +176,8 @@ int main()
             .waitSemaphoreCount = 1,
             .pWaitSemaphores = &renderFinishedList[backbufferFrame].get(),
             .swapchainCount = 1,
-            .pSwapchains = &vulkan.swapChain.get(),
-            .pImageIndices = &swapChainImageIndex,
+            .pSwapchains = &swapchain.swapchain.get(),
+            .pImageIndices = &swapchainImageIndex,
             .pResults = nullptr,
         };
 

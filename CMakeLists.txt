@@ -16,7 +16,8 @@ set(SRC_FILES
         ${SRC_DIR_VULKAN}/vulkan.cpp
         ${SRC_DIR_VULKAN}/device_builder.cpp
         ${SRC_DIR_VULKAN}/instance_builder.cpp
-        ${SRC_DIR_VULKAN}/pipeline.cpp)
+        ${SRC_DIR_VULKAN}/pipeline.cpp
+        ${SRC_DIR_VULKAN}/swapchain.cpp)
 file(GLOB SHADER_SRC_FILES src/shaders/*)
 add_executable(vulkan ${SRC_FILES})
 

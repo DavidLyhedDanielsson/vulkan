@@ -53,27 +53,9 @@ DeviceBuilder& DeviceBuilder::selectQueueFamily(QueueFamilySelector selector)
     return *this;
 }
 
-DeviceBuilder& DeviceBuilder::selectSurfaceFormat(SurfaceFormatSelector selector)
-{
-    this->surfaceFormatSelector = selector;
-    return *this;
-}
-
-DeviceBuilder& DeviceBuilder::selectPresentMode(PresentModeSelector selector)
-{
-    this->presentModeSelector = selector;
-    return *this;
-}
-
 DeviceBuilder& DeviceBuilder::withRequiredExtension(const char* name)
 {
     requiredExtensions.push_back(name);
-    return *this;
-}
-
-DeviceBuilder& DeviceBuilder::withNumberOfBackbuffers(uint32_t backbufferCount)
-{
-    this->backbufferCount = backbufferCount;
     return *this;
 }
 
@@ -102,6 +84,7 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 error.EnumeratePhysicalDevices.result = depRes;
                 return error;
             }
+
             auto [sfRes, surfaceFormats] = device.getSurfaceFormatsKHR(surface.get());
             if(sfRes != vk::Result::eSuccess)
             {
@@ -109,6 +92,7 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 error.NoSurfaceFormatFound.result = sfRes;
                 return error;
             }
+
             auto [pmRes, presentModes] = device.getSurfacePresentModesKHR(surface.get());
             if(pmRes != vk::Result::eSuccess)
             {
@@ -116,6 +100,7 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 error.NoPresentModeFound.result = pmRes;
                 return error;
             }
+
             auto [scRes, surfaceCapabilities] = device.getSurfaceCapabilitiesKHR(surface.get());
             if(scRes != vk::Result::eSuccess)
             {
@@ -128,11 +113,11 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 .device = device,
                 .properties = device.getProperties(),
                 .features = device.getFeatures(),
+                .surfaceCapabilities = surfaceCapabilities,
                 .queueFamilyProperties = device.getQueueFamilyProperties(),
                 .extensionProperties = extensionProperties,
                 .surfaceFormats = surfaceFormats,
                 .presentModes = presentModes,
-                .surfaceCapabilities = surfaceCapabilities,
             };
 
             bool hasSwapchainSupport = false;
@@ -331,72 +316,8 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         return error;
     }
 
-    auto defaultSurfaceFormatSelector =
-        [](const PhysicalDeviceInfo& info) -> std::optional<vk::SurfaceFormatKHR> {
-        auto iter =
-            std::find_if(entire_collection(info.surfaceFormats), [](vk::SurfaceFormatKHR format) {
-                return format.format == vk::Format::eB8G8R8A8Srgb;
-            });
-
-        if(iter == info.surfaceFormats.end())
-            return std::nullopt;
-        else
-            return *iter;
-    };
-    std::optional<vk::SurfaceFormatKHR> surfaceFormatOpt =
-        (this->surfaceFormatSelector ? this->surfaceFormatSelector
-                                     : defaultSurfaceFormatSelector)(physicalDeviceInfo);
-    if(!surfaceFormatOpt.has_value())
-    {
-        error.type = ErrorType::NoSurfaceFormatFound;
-        return error;
-    }
-    vk::SurfaceFormatKHR surfaceFormat = surfaceFormatOpt.value();
-
-    auto defaultPresentModeSelector =
-        [](const PhysicalDeviceInfo&) -> std::optional<vk::PresentModeKHR> {
-        return vk::PresentModeKHR::eFifo;
-    };
-    std::optional<vk::PresentModeKHR> presentModeOpt =
-        (this->presentModeSelector ? this->presentModeSelector
-                                   : defaultPresentModeSelector)(physicalDeviceInfo);
-    if(!presentModeOpt.has_value())
-    {
-        error.type = ErrorType::NoPresentModeFound;
-        return error;
-    }
-    vk::PresentModeKHR presentMode = presentModeOpt.value();
-
-    vk::SwapchainCreateInfoKHR swapChainCreateInfo = {
-        .surface = surface.get(),
-        .minImageCount =
-            backbufferCount.value_or(physicalDeviceInfo.surfaceCapabilities.minImageCount),
-        .imageFormat = surfaceFormat.format,
-        .imageColorSpace = surfaceFormat.colorSpace,
-        .imageExtent = physicalDeviceInfo.surfaceCapabilities.currentExtent,
-        .imageArrayLayers = 1,
-        .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
-        .imageSharingMode = vk::SharingMode::eExclusive,
-        .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = nullptr,
-        .preTransform = physicalDeviceInfo.surfaceCapabilities.currentTransform,
-        .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-        .presentMode = presentMode,
-        .clipped = VK_TRUE,
-        .oldSwapchain = VK_NULL_HANDLE,
-    };
-
-    auto [csRes, swapChain] = device->createSwapchainKHRUnique(swapChainCreateInfo);
-    if(csRes != vk::Result::eSuccess)
-    {
-        error.type = ErrorType::SwapChainCreationError;
-        error.SwapChainCreationError.result = csRes;
-        return error;
-    }
-
     return Data{
         .device = std::move(device),
-        .swapChain = std::move(swapChain),
         .physicalDeviceInfo = physicalDeviceInfo,
         .queueFamilyProperties = queueFamilyProperties,
     };

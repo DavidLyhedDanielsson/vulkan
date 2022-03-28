@@ -5,6 +5,7 @@
 #include <vulkan/vulkan_raii.hpp>
 
 #include "../config.h"
+#include "../window.h"
 #include "device_builder.h"
 
 struct GLFWwindow;
@@ -20,6 +21,7 @@ class Vulkan
         InstanceProcAddrNotFound,
         InstanceProcAddrError,
         OutOfMemory,
+        NoSurfaceFormatFound,
     };
 
     struct Error
@@ -48,8 +50,23 @@ class Vulkan
         };
     };
 
-    using CreateType = std::variant<Vulkan, Error>;
-    static CreateType createVulkan(GLFWwindow* windowHandle, const Config& config);
+    class Builder
+    {
+        using SurfaceFormatSelector =
+            std::function<std::optional<vk::SurfaceFormatKHR>(const PhysicalDeviceInfo&)>;
+
+      public:
+        Builder(const Config& config, Window& window);
+        Builder& selectSurfaceFormat(const SurfaceFormatSelector& selector);
+
+        std::variant<Vulkan, Error> build();
+
+      private:
+        const Config& config;
+        Window& window;
+
+        std::optional<SurfaceFormatSelector> surfaceFormatSelector;
+    };
 
     ~Vulkan();
     Vulkan(Vulkan&&) = default;
@@ -78,9 +95,7 @@ class Vulkan
         vk::UniqueDevice device,
         vk::Queue workQueue,
         vk::UniqueSurfaceKHR surface,
-        vk::UniqueSwapchainKHR swapChain,
-        std::vector<vk::Image> swapChainImages,
-        std::vector<vk::UniqueImageView> swapChainImageViews,
+        vk::SurfaceFormatKHR surfaceFormat,
         PhysicalDeviceInfo physicalDeviceInfo,
         QueueFamilyInfo queueFamilyProperties);
 
@@ -91,10 +106,7 @@ class Vulkan
     vk::UniqueDevice device;
     vk::Queue workQueue;
     vk::UniqueSurfaceKHR surface;
-    vk::UniqueSwapchainKHR swapChain;
-
-    std::vector<vk::Image> swapChainImages;
-    std::vector<vk::UniqueImageView> swapChainImageViews;
+    vk::SurfaceFormatKHR surfaceFormat;
 
     PhysicalDeviceInfo physicalDeviceInfo;
     QueueFamilyInfo queueFamilyProperties;

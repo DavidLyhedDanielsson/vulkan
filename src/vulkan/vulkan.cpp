@@ -33,7 +33,17 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyDebugUtilsMessengerEXT(
     return pfnVkDestroyDebugUtilsMessengerEXT(instance, messenger, pAllocator);
 }
 
-Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle, const Config& config)
+using Builder = Vulkan::Builder;
+
+Builder::Builder(const Config& config, Window& window): config(config), window(window) {}
+
+Builder& Builder::selectSurfaceFormat(const Builder::SurfaceFormatSelector& selector)
+{
+    this->surfaceFormatSelector = selector;
+    return *this;
+}
+
+std::variant<Vulkan, Vulkan::Error> Builder::build()
 {
     Error error = {};
 
@@ -98,7 +108,8 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle, const Config& 
     }
 
     VkSurfaceKHR surfaceRaw;
-    auto glfwRes = glfwCreateWindowSurface(instance.get(), windowHandle, nullptr, &surfaceRaw);
+    auto glfwRes =
+        glfwCreateWindowSurface(instance.get(), window.getWindowHandle(), nullptr, &surfaceRaw);
     if(glfwRes != VK_SUCCESS)
     {
         error.type = ErrorType::Unsupported;
@@ -107,28 +118,31 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle, const Config& 
     }
     vk::UniqueSurfaceKHR surface(surfaceRaw, instance.get());
 
-    auto deviceVar =
+    auto deviceBuilder =
         DeviceBuilder(instance, surface)
             .selectGpuWithRenderSupport(
-                [config](std::optional<PhysicalDeviceInfo>, const PhysicalDeviceInfo& potential)
-                    -> std::variant<bool, vk::Result> {
+                // Love the config = config syntax
+                [config = config](
+                    std::optional<PhysicalDeviceInfo>,
+                    const PhysicalDeviceInfo& potential) -> std::variant<bool, vk::Result> {
                     return potential.surfaceCapabilities.maxImageCount >= config.backbufferCount;
-                })
-            .selectSurfaceFormat(
-                [config](const PhysicalDeviceInfo& info) -> std::optional<vk::SurfaceFormatKHR> {
-                    auto iter = std::find_if(
-                        entire_collection(info.surfaceFormats),
-                        [config](vk::SurfaceFormatKHR format) {
-                            return format.format == config.backbufferFormat;
-                        });
+                });
+    //            .selectSurfaceFormat(
+    //                [config = config](const PhysicalDeviceInfo& info) ->
+    //                std::optional<vk::SurfaceFormatKHR> {
+    //                  auto iter = std::find_if(
+    //                      entire_collection(info.surfaceFormats),
+    //                      [config](vk::SurfaceFormatKHR format) {
+    //                        return format.format == config.backbufferFormat;
+    //                      });
+    //
+    //                  if(iter == info.surfaceFormats.end())
+    //                      return std::nullopt;
+    //                  else
+    //                      return *iter;
+    //                })
 
-                    if(iter == info.surfaceFormats.end())
-                        return std::nullopt;
-                    else
-                        return *iter;
-                })
-            .withNumberOfBackbuffers(config.backbufferCount)
-            .build();
+    auto deviceVar = deviceBuilder.build();
 
     if(std::holds_alternative<DeviceBuilder::Error>(deviceVar))
     {
@@ -138,63 +152,38 @@ Vulkan::CreateType Vulkan::createVulkan(GLFWwindow* windowHandle, const Config& 
     }
     auto deviceInfo = std::get<DeviceBuilder::Data>(std::move(deviceVar));
 
-    vk::Queue workQueue = deviceInfo.device->getQueue(deviceInfo.queueFamilyProperties.index, 0);
-    auto [gsiRes, swapChainImages] =
-        deviceInfo.device->getSwapchainImagesKHR(deviceInfo.swapChain.get());
-    if(gsiRes != vk::Result::eSuccess)
+    auto defaultSurfaceFormatSelector =
+        [](const PhysicalDeviceInfo& info) -> std::optional<vk::SurfaceFormatKHR> {
+        auto iter =
+            std::find_if(entire_collection(info.surfaceFormats), [](vk::SurfaceFormatKHR format) {
+                return format.format == vk::Format::eB8G8R8A8Srgb;
+            });
+
+        if(iter == info.surfaceFormats.end())
+            return std::nullopt;
+        else
+            return *iter;
+    };
+    std::optional<vk::SurfaceFormatKHR> surfaceFormatOpt =
+        (this->surfaceFormatSelector.has_value()
+             ? this->surfaceFormatSelector.value()
+             : defaultSurfaceFormatSelector)(deviceInfo.physicalDeviceInfo);
+    if(!surfaceFormatOpt.has_value())
     {
-        error.type = ErrorType::OutOfMemory;
-        error.OutOfMemory.result = gsiRes;
-        error.OutOfMemory.message = "getSwapchainImagesKHR";
+        error.type = ErrorType::NoSurfaceFormatFound;
         return error;
     }
+    vk::SurfaceFormatKHR surfaceFormat = surfaceFormatOpt.value();
 
-    std::vector<vk::UniqueImageView> swapChainImageViews;
-    swapChainImageViews.reserve(swapChainImages.size());
-    for(vk::Image image : swapChainImages)
-    {
-        vk::ImageViewCreateInfo imageCreateInfo = {
-            .image = image,
-            .viewType = vk::ImageViewType::e2D,
-            .format = config.backbufferFormat,
-            .components =
-                {
-                    .r = vk::ComponentSwizzle::eIdentity,
-                    .g = vk::ComponentSwizzle::eIdentity,
-                    .b = vk::ComponentSwizzle::eIdentity,
-                    .a = vk::ComponentSwizzle::eIdentity,
-                },
-            .subresourceRange =
-                {
-                    .aspectMask = vk::ImageAspectFlagBits::eColor,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1,
-                },
-        };
-
-        auto [civRes, imageViewRaw] = deviceInfo.device->createImageViewUnique(imageCreateInfo);
-        if(civRes != vk::Result::eSuccess)
-        {
-            error.type = ErrorType::OutOfMemory;
-            error.OutOfMemory.result = civRes;
-            error.OutOfMemory.message = "vkCreateImageView - swapchain";
-            return error;
-        }
-
-        swapChainImageViews.push_back(std::move(imageViewRaw));
-    }
+    vk::Queue workQueue = deviceInfo.device->getQueue(deviceInfo.queueFamilyProperties.index, 0);
 
     Vulkan vulkan(
         std::move(instance),
         std::move(msg),
         std::move(deviceInfo.device),
-        workQueue,
+        std::move(workQueue),
         std::move(surface),
-        std::move(deviceInfo.swapChain),
-        std::move(swapChainImages),
-        std::move(swapChainImageViews),
+        std::move(surfaceFormat),
         std::move(deviceInfo.physicalDeviceInfo),
         std::move(deviceInfo.queueFamilyProperties));
 
@@ -207,9 +196,7 @@ Vulkan::Vulkan(
     vk::UniqueDevice device,
     vk::Queue workQueue,
     vk::UniqueSurfaceKHR surface,
-    vk::UniqueSwapchainKHR swapChain,
-    std::vector<vk::Image> swapChainImages,
-    std::vector<vk::UniqueImageView> swapChainImageViews,
+    vk::SurfaceFormatKHR surfaceFormat,
     PhysicalDeviceInfo physicalDeviceInfo,
     QueueFamilyInfo queueFamilyProperties)
     : instance(std::move(instance))
@@ -217,9 +204,7 @@ Vulkan::Vulkan(
     , device(std::move(device))
     , workQueue(workQueue)
     , surface(std::move(surface))
-    , swapChain(std::move(swapChain))
-    , swapChainImages(std::move(swapChainImages))
-    , swapChainImageViews(std::move(swapChainImageViews))
+    , surfaceFormat(std::move(surfaceFormat))
     , physicalDeviceInfo(std::move(physicalDeviceInfo))
     , queueFamilyProperties(std::move(queueFamilyProperties))
 {

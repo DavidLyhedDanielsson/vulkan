@@ -1,21 +1,41 @@
 #include "window.h"
 #include <cassert>
 
-std::optional<Window> Window::createWindow(int width, int height, const char* name)
+void Window::glfwResizeCallback(GLFWwindow* glfwWindow, int width, int height)
+{
+    Window* window = (Window*)glfwGetWindowUserPointer(glfwWindow);
+    window->resizeCallback((uint32_t)width, (uint32_t)height);
+}
+
+std::optional<std::unique_ptr<Window>> Window::createWindow(
+    int width,
+    int height,
+    const char* name,
+    std::function<void(uint32_t width, uint32_t height)> resizeCallback)
 {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     GLFWwindow* glfwWindow = glfwCreateWindow(width, height, name, nullptr, nullptr);
+    assert(glfwWindow);
+
+    auto window = std::make_unique<Window>(Window(glfwWindow, std::move(resizeCallback)));
+    glfwSetWindowUserPointer(window->glfwWindow.get(), window.get());
+    glfwSetFramebufferSizeCallback(window->glfwWindow.get(), Window::glfwResizeCallback);
+
     if(glfwWindow)
-        return Window(glfwWindow);
+        return window;
     else
         return std::nullopt;
 }
 
-Window::Window(GLFWwindow* window): window(window, glfwDestroyWindow) {}
+Window::Window(
+    GLFWwindow* window,
+    std::function<void(uint32_t width, uint32_t height)> resizeCallback)
+    : glfwWindow(window, glfwDestroyWindow)
+    , resizeCallback(resizeCallback)
+{
+}
 
 Window::~Window() {}
-
-void Window::createWindow() {}
 
 void Window::pollEvents()
 {
@@ -24,10 +44,10 @@ void Window::pollEvents()
 
 bool Window::shouldClose()
 {
-    return glfwWindowShouldClose(window.get());
+    return glfwWindowShouldClose(glfwWindow.get());
 }
 
 GLFWwindow* Window::getWindowHandle()
 {
-    return window.get();
+    return glfwWindow.get();
 }
