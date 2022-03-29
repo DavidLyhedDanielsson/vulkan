@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "shader_registry.h"
+#include "vertex.h"
 #include "vulkan/pipeline.h"
 #include "vulkan/swapchain.h"
 #include "vulkan/vulkan.h"
@@ -64,7 +65,10 @@ int main()
             .withViewport(Pipeline::Builder::Viewport::Fullscreen)
             .withRasterizerState(Pipeline::Builder::Rasterizer::BackfaceCulling)
             .withMultisampleState(Pipeline::Builder::Multisample::Disabled)
-            .withBlendState(Pipeline::Builder::Blend::Disabled);
+            .withBlendState(Pipeline::Builder::Blend::Disabled)
+            .withLinearVertexLayout<TriangleVertex>(
+                vk::Format::eR32G32Sfloat,
+                vk::Format::eR32G32B32Sfloat);
 
     Pipeline pipeline = pipelineBuilder.build();
 
@@ -110,6 +114,60 @@ int main()
         assert(fRes == vk::Result::eSuccess);
         fences[i] = std::move(fence);
     }
+
+    std::vector<TriangleVertex> vertices = {
+        TriangleVertex{{-0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+        TriangleVertex{{0.0f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+        TriangleVertex{{0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+
+        TriangleVertex{{-0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+        TriangleVertex{{0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+        TriangleVertex{{0.0f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    };
+    vk::BufferCreateInfo bufferInfo = {
+        .size = sizeof(TriangleVertex) * vertices.size(),
+        .usage = vk::BufferUsageFlagBits::eVertexBuffer,
+        .sharingMode = vk::SharingMode::eExclusive,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+    };
+    auto [res, vertexBuffer] = vulkan.device->createBufferUnique(bufferInfo);
+    assert(res == vk::Result::eSuccess);
+
+    auto memoryProperties = vulkan.physicalDeviceInfo.device.getMemoryProperties();
+    auto memoryRequirements = vulkan.device->getBufferMemoryRequirements(vertexBuffer.get());
+
+    std::optional<uint32_t> memoryIndexOpt = 0;
+    for(uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
+    {
+        const auto required =
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+        if(memoryRequirements.memoryTypeBits & (1 << i)
+           && (memoryProperties.memoryTypes[i].propertyFlags & required))
+        {
+            memoryIndexOpt = i;
+            break;
+        }
+    }
+    assert(memoryIndexOpt.has_value());
+    uint32_t memoryIndex = memoryIndexOpt.value();
+
+    vk::MemoryAllocateInfo allocateInfo = {
+        .allocationSize = memoryRequirements.size,
+        .memoryTypeIndex = memoryIndex,
+    };
+    auto [amRes, memory] = vulkan.device->allocateMemoryUnique(allocateInfo);
+    assert(amRes == vk::Result::eSuccess);
+    assert(
+        vulkan.device->bindBufferMemory(vertexBuffer.get(), memory.get(), 0)
+        == vk::Result::eSuccess);
+
+    void* data;
+    assert(
+        vulkan.device->mapMemory(memory.get(), 0, bufferInfo.size, vk::MemoryMapFlags(), &data)
+        == vk::Result::eSuccess);
+    std::memcpy(data, vertices.data(), bufferInfo.size);
+    vulkan.device->unmapMemory(memory.get());
 
     bool recreateSwapchain = false;
     uint32_t frame = 0;
@@ -219,7 +277,9 @@ int main()
             },
             vk::SubpassContents::eInline);
         commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.pipeline.get());
-        commandBuffer->draw(3, 1, 0, 0);
+        vk::DeviceSize offset = 0;
+        commandBuffer->bindVertexBuffers(0, 1, &vertexBuffer.get(), &offset);
+        commandBuffer->draw(vertices.size(), 1, 0, 0);
         commandBuffer->endRenderPass();
         assert(commandBuffer->end() == vk::Result::eSuccess);
 

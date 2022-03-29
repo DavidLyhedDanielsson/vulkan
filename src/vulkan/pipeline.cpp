@@ -136,12 +136,24 @@ Pipeline Builder::build()
 
 void Builder::fillVertexInfo()
 {
-    vertexInputInfo = vk::PipelineVertexInputStateCreateInfo{
-        .vertexBindingDescriptionCount = 0,
-        .pVertexBindingDescriptions = nullptr,
-        .vertexAttributeDescriptionCount = 0,
-        .pVertexAttributeDescriptions = nullptr,
-    };
+    if(this->vertexAttributes.empty())
+    {
+        vertexInputInfo = vk::PipelineVertexInputStateCreateInfo{
+            .vertexBindingDescriptionCount = 0,
+            .pVertexBindingDescriptions = nullptr,
+            .vertexAttributeDescriptionCount = 0,
+            .pVertexAttributeDescriptions = nullptr,
+        };
+    }
+    else
+    {
+        vertexInputInfo = vk::PipelineVertexInputStateCreateInfo{
+            .vertexBindingDescriptionCount = 1,
+            .pVertexBindingDescriptions = &this->vertexBinding,
+            .vertexAttributeDescriptionCount = (uint32_t)this->vertexAttributes.size(),
+            .pVertexAttributeDescriptions = this->vertexAttributes.data(),
+        };
+    }
 }
 
 void Builder::fillShaderStageInfo()
