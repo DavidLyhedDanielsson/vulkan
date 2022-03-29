@@ -153,3 +153,11 @@ Swapchain::Swapchain(
     , framebuffers(std::move(framebuffers))
 {
 }
+
+void Swapchain::reset()
+{
+    framebuffers.clear();
+    swapchainImageViews.clear();
+    swapchainImages.clear();
+    swapchain.reset();
+}

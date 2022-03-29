@@ -53,7 +53,7 @@ int main()
     assert(
         !shaderRegistry.loadFragmentShader(vulkan.device, ShaderPaths::FakeFragment).has_value());
 
-    Pipeline pipeline =
+    auto pipelineBuilder =
         Pipeline::Builder()
             .usingConfig(config)
             .usingShaderRegistry(shaderRegistry)
@@ -64,14 +64,15 @@ int main()
             .withViewport(Pipeline::Builder::Viewport::Fullscreen)
             .withRasterizerState(Pipeline::Builder::Rasterizer::BackfaceCulling)
             .withMultisampleState(Pipeline::Builder::Multisample::Disabled)
-            .withBlendState(Pipeline::Builder::Blend::Disabled)
-            .build();
+            .withBlendState(Pipeline::Builder::Blend::Disabled);
 
-    auto swapchainVar = Swapchain::Builder(config, vulkan.surface, vulkan.device)
-                            .withBackbufferFormat(vulkan.surfaceFormat.format)
-                            .withColorSpace(vulkan.surfaceFormat.colorSpace)
-                            .createFramebuffersFor(pipeline.renderPass)
-                            .build();
+    Pipeline pipeline = pipelineBuilder.build();
+
+    auto swapchainBuilder = Swapchain::Builder(config, vulkan.surface, vulkan.device)
+                                .withBackbufferFormat(vulkan.surfaceFormat.format)
+                                .withColorSpace(vulkan.surfaceFormat.colorSpace)
+                                .createFramebuffersFor(pipeline.renderPass);
+    auto swapchainVar = swapchainBuilder.build();
     assert(!std::holds_alternative<Swapchain::Builder::Error>(swapchainVar));
     auto swapchain = std::get<Swapchain>(std::move(swapchainVar));
     // Command buffers
@@ -110,30 +111,97 @@ int main()
         fences[i] = std::move(fence);
     }
 
+    bool recreateSwapchain = false;
     uint32_t frame = 0;
     uint32_t backbufferFrame = 0;
     while(!mainWindow->shouldClose())
     {
         mainWindow->pollEvents();
 
-        if(windowResized.has_value())
+        if(windowResized.has_value() || recreateSwapchain)
         {
-            auto [newWidth, newHeight] = windowResized.value();
+            if(windowResized.has_value())
+            {
+                auto [newWidth, newHeight] = windowResized.value();
+                windowResized.reset();
+                config.resolutionWidth = newWidth;
+                config.resolutionHeight = newHeight;
+                std::cout << "Resizing to " << newWidth << "; " << newHeight << std::endl;
+            }
+            else
+            {
+                std::cout << "Resizing without info";
+            }
+
+            // I can't verify this because i3wm never minimizes, but vulkan-tutorial says this works
+            // :)
+            int width = 0;
+            int height = 0;
+            glfwGetFramebufferSize(mainWindow->getWindowHandle(), &width, &height);
+            bool minimized = false;
+            while(width == 0 || height == 0)
+            {
+                minimized = true;
+                glfwGetFramebufferSize(mainWindow->getWindowHandle(), &width, &height);
+                glfwWaitEvents();
+            }
+            if(minimized)
+                continue;
 
             assert(vulkan.device->waitIdle() == vk::Result::eSuccess);
 
-            pipeline.release();
+            swapchain.reset();
+            pipeline.reset();
+
+            pipeline = pipelineBuilder.build();
+            swapchainBuilder.createFramebuffersFor(pipeline.renderPass);
+            auto swapchainVar = swapchainBuilder.build();
+            assert(std::holds_alternative<Swapchain>(swapchainVar));
+            swapchain = std::move(std::get<Swapchain>(swapchainVar));
+            recreateSwapchain = false;
+
+            // The swapchain might already be invalid if the window is still being resized
+            continue;
         }
 
         auto wffRes = vulkan.device->waitForFences(fences[backbufferFrame].get(), true, UINT64_MAX);
         assert(wffRes == vk::Result::eSuccess);
-        vulkan.device->resetFences(fences[backbufferFrame].get());
+
+#define handleRetError(Fun)                                                            \
+    {                                                                                  \
+        auto res = Fun;                                                                \
+        if(res == vk::Result::eErrorOutOfDateKHR || res == vk::Result::eSuboptimalKHR) \
+        {                                                                              \
+            recreateSwapchain = true;                                                  \
+            continue;                                                                  \
+        }                                                                              \
+        else                                                                           \
+        {                                                                              \
+            assert(res == vk::Result::eSuccess);                                       \
+        }                                                                              \
+    }
+
+#define handleError(val)                                                                   \
+    {                                                                                      \
+        if((val) == vk::Result::eErrorOutOfDateKHR || (val) == vk::Result::eSuboptimalKHR) \
+        {                                                                                  \
+            recreateSwapchain = true;                                                      \
+            continue;                                                                      \
+        }                                                                                  \
+        else                                                                               \
+        {                                                                                  \
+            assert((val) == vk::Result::eSuccess);                                         \
+        }                                                                                  \
+    }
 
         auto [acnRes, swapchainImageIndex] = vulkan.device->acquireNextImageKHR(
             swapchain.swapchain.get(),
             UINT64_MAX,
             imageAvailableList[backbufferFrame].get(),
             VK_NULL_HANDLE);
+        handleError(acnRes);
+
+        vulkan.device->resetFences(fences[backbufferFrame].get());
 
         auto& commandBuffer = commandBuffers[backbufferFrame];
         commandBuffer->reset();
@@ -181,7 +249,7 @@ int main()
             .pResults = nullptr,
         };
 
-        assert(vulkan.workQueue.presentKHR(presentInfo) == vk::Result::eSuccess);
+        handleRetError(vulkan.workQueue.presentKHR(presentInfo));
 
         frame++;
         backbufferFrame = frame % config.backbufferCount;

@@ -106,8 +106,10 @@ class Pipeline
     ~Pipeline();
     Pipeline(const Pipeline&) = delete;
     Pipeline& operator=(const Pipeline&) = delete;
+    Pipeline(Pipeline&&) = default;
+    Pipeline& operator=(Pipeline&&) = default;
 
-    void release();
+    void reset();
 
     vk::UniquePipeline pipeline;
     vk::UniquePipelineLayout pipelineLayout;

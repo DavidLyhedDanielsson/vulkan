@@ -58,4 +58,9 @@ add_dependencies(vulkan ShaderCompile)
 
 target_include_directories(vulkan PUBLIC ${Vulkan_INCLUDE_DIRS} ${GLM_INCLUDE_DIRS})
 target_link_libraries(vulkan PRIVATE ${Vulkan_LIBRARIES} glfw)
-target_compile_definitions(vulkan PRIVATE GLFW_INCLUDE_VULKAN VULKAN_HPP_NO_CONSTRUCTORS VULKAN_HPP_NO_EXCEPTIONS)
+#Cmake can't pass macros, but (void)(expr) kind of works as a noop
+target_compile_definitions(vulkan PRIVATE
+        GLFW_INCLUDE_VULKAN
+        VULKAN_HPP_NO_CONSTRUCTORS
+        VULKAN_HPP_NO_EXCEPTIONS
+        VULKAN_HPP_ASSERT_ON_RESULT=\(void\))

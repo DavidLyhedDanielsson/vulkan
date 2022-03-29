@@ -13,11 +13,11 @@ Pipeline::Pipeline(
 }
 Pipeline::~Pipeline() = default;
 
-void Pipeline::release()
+void Pipeline::reset()
 {
-    pipeline.release();
-    pipelineLayout.release();
-    renderPass.release();
+    pipeline.reset();
+    pipelineLayout.reset();
+    renderPass.reset();
 }
 
 using Builder = Pipeline::Builder;

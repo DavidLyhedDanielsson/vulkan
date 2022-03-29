@@ -70,9 +70,11 @@ class Swapchain
         std::vector<vk::UniqueFramebuffer> framebuffers);
 
     Swapchain(const Swapchain&) = delete;
-    Swapchain(Swapchain&&) = default;
     Swapchain& operator=(const Swapchain&) = delete;
+    Swapchain(Swapchain&&) = default;
     Swapchain& operator=(Swapchain&&) = default;
+
+    void reset();
 
     vk::UniqueSwapchainKHR swapchain;
     std::vector<vk::Image> swapchainImages;
