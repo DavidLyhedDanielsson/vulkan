@@ -2,6 +2,6 @@
 
 namespace ShaderPaths
 {
-    std::filesystem::path FakeVertex = "shaders/fake.vert.spv";
-    std::filesystem::path FakeFragment = "shaders/fake.frag.spv";
+    std::filesystem::path Simple2D = "shaders/simple2d.vert.spv";
+    std::filesystem::path ColorPassthrough = "shaders/color_passthrough.frag.spv";
 }

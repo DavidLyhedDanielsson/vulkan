@@ -7,6 +7,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 
 set(SRC_DIR ${CMAKE_SOURCE_DIR}/src)
 set(SRC_DIR_VULKAN ${SRC_DIR}/vulkan)
+set(SRC_DIR_SHADERS ${SRC_DIR}/shaders)
 set(SRC_FILES
         ${SRC_DIR}/main.cpp
         ${SRC_DIR}/window.cpp
@@ -18,7 +19,9 @@ set(SRC_FILES
         ${SRC_DIR_VULKAN}/instance_builder.cpp
         ${SRC_DIR_VULKAN}/pipeline.cpp
         ${SRC_DIR_VULKAN}/swapchain.cpp)
-file(GLOB SHADER_SRC_FILES src/shaders/*)
+set(SHADER_SRC_FILES
+        ${SRC_DIR_SHADERS}/color_passthrough.frag
+        ${SRC_DIR_SHADERS}/simple2d.vert)
 add_executable(vulkan ${SRC_FILES})
 
 # https://stackoverflow.com/questions/2368811/how-to-set-warning-level-in-cmake

@@ -50,17 +50,17 @@ int main()
 
     // Preload shaders
     ShaderRegistry shaderRegistry;
-    assert(!shaderRegistry.loadVertexShader(vulkan.device, ShaderPaths::FakeVertex).has_value());
-    assert(
-        !shaderRegistry.loadFragmentShader(vulkan.device, ShaderPaths::FakeFragment).has_value());
+    assert(!shaderRegistry.loadVertexShader(vulkan.device, ShaderPaths::Simple2D).has_value());
+    assert(!shaderRegistry.loadFragmentShader(vulkan.device, ShaderPaths::ColorPassthrough)
+                .has_value());
 
     auto pipelineBuilder =
         Pipeline::Builder()
             .usingConfig(config)
             .usingShaderRegistry(shaderRegistry)
             .usingDevice(vulkan.device)
-            .withVertexShader(ShaderPaths::FakeVertex)
-            .withFragmentShader(ShaderPaths::FakeFragment)
+            .withVertexShader(ShaderPaths::Simple2D)
+            .withFragmentShader(ShaderPaths::ColorPassthrough)
             .withPrimitiveTopology(Pipeline::Builder::PrimitiveTopology::TriangleList)
             .withViewport(Pipeline::Builder::Viewport::Fullscreen)
             .withRasterizerState(Pipeline::Builder::Rasterizer::BackfaceCulling)

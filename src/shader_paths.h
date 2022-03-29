@@ -4,6 +4,6 @@
 
 namespace ShaderPaths
 {
-    extern std::filesystem::path FakeVertex;
-    extern std::filesystem::path FakeFragment;
+    extern std::filesystem::path Simple2D;
+    extern std::filesystem::path ColorPassthrough;
 }
