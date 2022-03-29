@@ -18,7 +18,8 @@ set(SRC_FILES
         ${SRC_DIR_VULKAN}/device_builder.cpp
         ${SRC_DIR_VULKAN}/instance_builder.cpp
         ${SRC_DIR_VULKAN}/pipeline.cpp
-        ${SRC_DIR_VULKAN}/swapchain.cpp)
+        ${SRC_DIR_VULKAN}/swapchain.cpp
+        ${SRC_DIR_VULKAN}/buffer.cpp)
 set(SHADER_SRC_FILES
         ${SRC_DIR_SHADERS}/color_passthrough.frag
         ${SRC_DIR_SHADERS}/simple2d.vert)

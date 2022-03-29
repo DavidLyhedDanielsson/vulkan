@@ -6,6 +6,7 @@
 #include "config.h"
 #include "shader_registry.h"
 #include "vertex.h"
+#include "vulkan/buffer.h"
 #include "vulkan/pipeline.h"
 #include "vulkan/swapchain.h"
 #include "vulkan/vulkan.h"
@@ -72,10 +73,11 @@ int main()
 
     Pipeline pipeline = pipelineBuilder.build();
 
-    auto swapchainBuilder = Swapchain::Builder(config, vulkan.surface, vulkan.device)
-                                .withBackbufferFormat(vulkan.surfaceFormat.format)
-                                .withColorSpace(vulkan.surfaceFormat.colorSpace)
-                                .createFramebuffersFor(pipeline.renderPass);
+    auto swapchainBuilder =
+        Swapchain::Builder(config, vulkan.surface, vulkan.device, vulkan.physicalDeviceInfo.device)
+            .withBackbufferFormat(vulkan.surfaceFormat.format)
+            .withColorSpace(vulkan.surfaceFormat.colorSpace)
+            .createFramebuffersFor(pipeline.renderPass);
     auto swapchainVar = swapchainBuilder.build();
     assert(!std::holds_alternative<Swapchain::Builder::Error>(swapchainVar));
     auto swapchain = std::get<Swapchain>(std::move(swapchainVar));
@@ -124,50 +126,30 @@ int main()
         TriangleVertex{{0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}},
         TriangleVertex{{0.0f, 0.5f}, {0.0f, 1.0f, 0.0f}},
     };
-    vk::BufferCreateInfo bufferInfo = {
-        .size = sizeof(TriangleVertex) * vertices.size(),
-        .usage = vk::BufferUsageFlagBits::eVertexBuffer,
-        .sharingMode = vk::SharingMode::eExclusive,
-        .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = nullptr,
-    };
-    auto [res, vertexBuffer] = vulkan.device->createBufferUnique(bufferInfo);
-    assert(res == vk::Result::eSuccess);
-
     auto memoryProperties = vulkan.physicalDeviceInfo.device.getMemoryProperties();
-    auto memoryRequirements = vulkan.device->getBufferMemoryRequirements(vertexBuffer.get());
+    auto bufferVar = Buffer::Builder(vulkan.device)
+                         .withVertexBufferFormat()
+                         .withSize(sizeof(TriangleVertex) * vertices.size())
+                         .withMapFunctionality(memoryProperties)
+                         .build();
+    assert(std::holds_alternative<Buffer>(bufferVar));
+    auto vertexBuffer = std::get<Buffer>(std::move(bufferVar));
 
-    std::optional<uint32_t> memoryIndexOpt = 0;
-    for(uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
-    {
-        const auto required =
-            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
-        if(memoryRequirements.memoryTypeBits & (1 << i)
-           && (memoryProperties.memoryTypes[i].propertyFlags & required))
-        {
-            memoryIndexOpt = i;
-            break;
-        }
-    }
-    assert(memoryIndexOpt.has_value());
-    uint32_t memoryIndex = memoryIndexOpt.value();
-
-    vk::MemoryAllocateInfo allocateInfo = {
-        .allocationSize = memoryRequirements.size,
-        .memoryTypeIndex = memoryIndex,
-    };
-    auto [amRes, memory] = vulkan.device->allocateMemoryUnique(allocateInfo);
-    assert(amRes == vk::Result::eSuccess);
     assert(
-        vulkan.device->bindBufferMemory(vertexBuffer.get(), memory.get(), 0)
+        vulkan.device->bindBufferMemory(vertexBuffer.buffer.get(), vertexBuffer.memory.get(), 0)
         == vk::Result::eSuccess);
 
     void* data;
     assert(
-        vulkan.device->mapMemory(memory.get(), 0, bufferInfo.size, vk::MemoryMapFlags(), &data)
+        vulkan.device->mapMemory(
+            vertexBuffer.memory.get(),
+            0,
+            vertexBuffer.size,
+            vk::MemoryMapFlags(),
+            &data)
         == vk::Result::eSuccess);
-    std::memcpy(data, vertices.data(), bufferInfo.size);
-    vulkan.device->unmapMemory(memory.get());
+    std::memcpy(data, vertices.data(), vertexBuffer.size);
+    vulkan.device->unmapMemory(vertexBuffer.memory.get());
 
     bool recreateSwapchain = false;
     uint32_t frame = 0;
@@ -278,7 +260,7 @@ int main()
             vk::SubpassContents::eInline);
         commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.pipeline.get());
         vk::DeviceSize offset = 0;
-        commandBuffer->bindVertexBuffers(0, 1, &vertexBuffer.get(), &offset);
+        commandBuffer->bindVertexBuffers(0, 1, &vertexBuffer.buffer.get(), &offset);
         commandBuffer->draw(vertices.size(), 1, 0, 0);
         commandBuffer->endRenderPass();
         assert(commandBuffer->end() == vk::Result::eSuccess);
