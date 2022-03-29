@@ -33,14 +33,12 @@ int main()
     };
 
     //  Create window
-    std::optional<WindowSize> windowResized;
+    bool windowResized = false;
     auto mainWindowOpt = Window::createWindow(
         (int)config.resolutionWidth,
         (int)config.resolutionHeight,
         "Vulkan window",
-        [&windowResized](uint32_t width, uint32_t height) {
-            windowResized = {width, height};
-        });
+        [&windowResized](uint32_t, uint32_t) { windowResized = true; });
     assert(mainWindowOpt.has_value());
     std::unique_ptr<Window> mainWindow = std::move(mainWindowOpt.value());
 
@@ -73,11 +71,10 @@ int main()
 
     Pipeline pipeline = pipelineBuilder.build();
 
-    auto swapchainBuilder =
-        Swapchain::Builder(config, vulkan.surface, vulkan.device, vulkan.physicalDeviceInfo.device)
-            .withBackbufferFormat(vulkan.surfaceFormat.format)
-            .withColorSpace(vulkan.surfaceFormat.colorSpace)
-            .createFramebuffersFor(pipeline.renderPass);
+    auto swapchainBuilder = Swapchain::Builder(config, vulkan.surface, vulkan.device)
+                                .withBackbufferFormat(vulkan.surfaceFormat.format)
+                                .withColorSpace(vulkan.surfaceFormat.colorSpace)
+                                .createFramebuffersFor(pipeline.renderPass);
     auto swapchainVar = swapchainBuilder.build();
     assert(!std::holds_alternative<Swapchain::Builder::Error>(swapchainVar));
     auto swapchain = std::get<Swapchain>(std::move(swapchainVar));
@@ -158,20 +155,25 @@ int main()
     {
         mainWindow->pollEvents();
 
-        if(windowResized.has_value() || recreateSwapchain)
+        if(windowResized || recreateSwapchain)
         {
-            if(windowResized.has_value())
-            {
-                auto [newWidth, newHeight] = windowResized.value();
-                windowResized.reset();
-                config.resolutionWidth = newWidth;
-                config.resolutionHeight = newHeight;
-                std::cout << "Resizing to " << newWidth << "; " << newHeight << std::endl;
-            }
-            else
-            {
-                std::cout << "Resizing without info";
-            }
+            assert(vulkan.device->waitIdle() == vk::Result::eSuccess);
+
+            // The GLFW window size and the surface capabilities extents tend to not match, so let's
+            // not even do that
+            auto val =
+                vulkan.physicalDeviceInfo.device.getSurfaceCapabilitiesKHR(vulkan.surface.get())
+                    .value;
+
+            int clampedWidth = std::max(
+                val.minImageExtent.width,
+                std::min(val.maxImageExtent.width, config.resolutionWidth));
+            int clampedHeight = std::max(
+                val.minImageExtent.height,
+                std::min(val.maxImageExtent.height, config.resolutionHeight));
+
+            config.resolutionWidth = clampedWidth;
+            config.resolutionHeight = clampedHeight;
 
             // I can't verify this because i3wm never minimizes, but vulkan-tutorial says this works
             // :)
@@ -188,7 +190,7 @@ int main()
             if(minimized)
                 continue;
 
-            assert(vulkan.device->waitIdle() == vk::Result::eSuccess);
+            windowResized = false;
 
             swapchain.reset();
             pipeline.reset();
