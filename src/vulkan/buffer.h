@@ -50,6 +50,8 @@ struct Buffer
 
         Self& withSize(uint32_t);
         Self& withVertexBufferFormat();
+        Self& withTransferSourceFormat(const vk::PhysicalDeviceMemoryProperties&);
+        Self& withTransferDestFormat(const vk::PhysicalDeviceMemoryProperties&);
         Self& withMapFunctionality(const vk::PhysicalDeviceMemoryProperties&);
         Self& withMemoryTypeSelector(const MemoryTypeSelector&);
 
@@ -57,6 +59,9 @@ struct Buffer
 
       private:
         const vk::UniqueDevice& device;
+
+        bool mapFunctionality;
+        bool transferFunctionality;
 
         vk::BufferCreateInfo bufferInfo;
         MemoryTypeSelector memoryTypeSelector;

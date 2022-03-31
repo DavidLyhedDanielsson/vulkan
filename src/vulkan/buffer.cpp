@@ -15,12 +15,29 @@ Builder& Builder::withSize(uint32_t size)
 
 Builder& Builder::withVertexBufferFormat()
 {
-    bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer;
+    bufferInfo.usage |= vk::BufferUsageFlagBits::eVertexBuffer;
+    return *this;
+}
+
+Builder::Self& Buffer::Builder::withTransferSourceFormat(
+    const vk::PhysicalDeviceMemoryProperties& memoryProperties)
+{
+    bufferInfo.usage |= vk::BufferUsageFlagBits::eTransferSrc;
+    this->memoryProperties = memoryProperties;
+    return *this;
+}
+
+Builder::Self& Buffer::Builder::withTransferDestFormat(
+    const vk::PhysicalDeviceMemoryProperties& memoryProperties)
+{
+    bufferInfo.usage |= vk::BufferUsageFlagBits::eTransferDst;
+    this->memoryProperties = memoryProperties;
     return *this;
 }
 
 Builder& Builder::withMapFunctionality(const vk::PhysicalDeviceMemoryProperties& memoryProperties)
 {
+    mapFunctionality = true;
     this->memoryProperties = memoryProperties;
     return *this;
 }
@@ -56,8 +73,16 @@ std::variant<Buffer, Builder::Error> Builder::build() const
     std::optional<uint32_t> memoryIndexOpt = 0;
     for(uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
     {
-        const auto required =
-            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+        vk::MemoryPropertyFlags required;
+        if(mapFunctionality)
+        {
+            required |= vk::MemoryPropertyFlagBits::eHostVisible
+                        | vk::MemoryPropertyFlagBits::eHostCoherent;
+        }
+        else if(bufferInfo.usage & vk::BufferUsageFlagBits::eTransferDst)
+        {
+            required |= vk::MemoryPropertyFlagBits::eDeviceLocal;
+        }
         if(memoryRequirements.memoryTypeBits & (1 << i)
            && (memoryProperties.memoryTypes[i].propertyFlags & required))
         {

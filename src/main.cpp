@@ -14,11 +14,12 @@
 
 #include "shader_paths.h"
 
-struct WindowSize
+template<typename T, typename E>
+T expectResult(std::variant<T, E> var)
 {
-    uint32_t width;
-    uint32_t height;
-};
+    assert(std::holds_alternative<T>(var));
+    return std::move(std::get<T>(var));
+}
 
 int main()
 {
@@ -114,6 +115,8 @@ int main()
         fences[i] = std::move(fence);
     }
 
+    auto memoryProperties = vulkan.physicalDeviceInfo.device.getMemoryProperties();
+
     std::vector<TriangleVertex> vertices = {
         TriangleVertex{{-0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
         TriangleVertex{{0.0f, -0.5f}, {0.0f, 1.0f, 0.0f}},
@@ -123,30 +126,61 @@ int main()
         TriangleVertex{{0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}},
         TriangleVertex{{0.0f, 0.5f}, {0.0f, 1.0f, 0.0f}},
     };
-    auto memoryProperties = vulkan.physicalDeviceInfo.device.getMemoryProperties();
-    auto bufferVar = Buffer::Builder(vulkan.device)
-                         .withVertexBufferFormat()
-                         .withSize(sizeof(TriangleVertex) * vertices.size())
-                         .withMapFunctionality(memoryProperties)
-                         .build();
-    assert(std::holds_alternative<Buffer>(bufferVar));
-    auto vertexBuffer = std::get<Buffer>(std::move(bufferVar));
+    auto verticesSize = sizeof(TriangleVertex) * vertices.size();
 
+    auto vertexBuffer = expectResult(Buffer::Builder(vulkan.device)
+                                         .withVertexBufferFormat()
+                                         .withTransferDestFormat(memoryProperties)
+                                         .withSize(verticesSize)
+                                         .build());
     assert(
         vulkan.device->bindBufferMemory(vertexBuffer.buffer.get(), vertexBuffer.memory.get(), 0)
         == vk::Result::eSuccess);
 
-    void* data;
-    assert(
-        vulkan.device->mapMemory(
-            vertexBuffer.memory.get(),
-            0,
-            vertexBuffer.size,
-            vk::MemoryMapFlags(),
-            &data)
-        == vk::Result::eSuccess);
-    std::memcpy(data, vertices.data(), vertexBuffer.size);
-    vulkan.device->unmapMemory(vertexBuffer.memory.get());
+    {
+        auto srcBuffer = expectResult(Buffer::Builder(vulkan.device)
+                                          .withSize(verticesSize)
+                                          .withMapFunctionality(memoryProperties)
+                                          .withTransferSourceFormat(memoryProperties)
+                                          .build());
+
+        assert(
+            vulkan.device->bindBufferMemory(srcBuffer.buffer.get(), srcBuffer.memory.get(), 0)
+            == vk::Result::eSuccess);
+
+        void* data;
+        assert(
+            vulkan.device
+                ->mapMemory(srcBuffer.memory.get(), 0, VK_WHOLE_SIZE, vk::MemoryMapFlags(), &data)
+            == vk::Result::eSuccess);
+        std::memcpy(data, vertices.data(), verticesSize);
+        vulkan.device->unmapMemory(srcBuffer.memory.get());
+
+        auto [acb2Res, copyBuffer] = vulkan.device->allocateCommandBuffersUnique({
+            .commandPool = commandPool.get(),
+            .level = vk::CommandBufferLevel::ePrimary,
+            .commandBufferCount = 1,
+        });
+        assert(acb2Res == vk::Result::eSuccess);
+
+        vk::CommandBufferBeginInfo beginInfo = {
+            .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit,
+        };
+        assert(copyBuffer[0]->begin(beginInfo) == vk::Result::eSuccess);
+        vk::BufferCopy copyInfo{
+            .size = verticesSize,
+        };
+        copyBuffer[0]->copyBuffer(srcBuffer.buffer.get(), vertexBuffer.buffer.get(), 1, &copyInfo);
+        assert(copyBuffer[0]->end() == vk::Result::eSuccess);
+
+        vk::SubmitInfo submitInfo = {
+            .commandBufferCount = 1,
+            .pCommandBuffers = &copyBuffer[0].get(),
+        };
+        assert(vulkan.workQueue.submit(1, &submitInfo, VK_NULL_HANDLE) == vk::Result::eSuccess);
+
+        assert(vulkan.workQueue.waitIdle() == vk::Result::eSuccess);
+    }
 
     bool recreateSwapchain = false;
     uint32_t frame = 0;
