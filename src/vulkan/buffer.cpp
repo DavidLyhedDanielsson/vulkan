@@ -2,7 +2,7 @@
 
 using Builder = Buffer::Builder;
 
-Builder::Builder(const vk::UniqueDevice& device): device(device)
+Builder::Builder(const vk::UniqueDevice& device): device(device), mapFunctionality(false)
 {
     this->bufferInfo.sharingMode = vk::SharingMode::eExclusive;
 }
@@ -39,12 +39,6 @@ Builder& Builder::withMapFunctionality(const vk::PhysicalDeviceMemoryProperties&
 {
     mapFunctionality = true;
     this->memoryProperties = memoryProperties;
-    return *this;
-}
-
-Builder& Builder::withMemoryTypeSelector(const Builder::MemoryTypeSelector& selector)
-{
-    memoryTypeSelector = selector;
     return *this;
 }
 

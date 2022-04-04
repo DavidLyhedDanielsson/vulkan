@@ -1,6 +1,8 @@
 #include "file_utils.h"
 
+#include <cassert>
 #include <fstream>
+#include <limits>
 
 namespace FileUtils
 {
@@ -12,7 +14,11 @@ namespace FileUtils
 
         std::vector<char> outData(in.tellg());
         in.seekg(0);
-        in.read(outData.data(), outData.size());
+        assert(outData.size() <= std::numeric_limits<std::streamsize>::max());
+        if(outData.size() <= std::numeric_limits<std::streamsize>::max())
+        {
+            in.read(outData.data(), (std::streamsize)outData.size());
+        }
 
         return outData;
     }

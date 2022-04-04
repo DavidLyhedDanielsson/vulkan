@@ -1,88 +1,66 @@
-#include "pipeline.h"
+#include "pipeline_builder.h"
 
-Pipeline::Pipeline(
-    vk::UniquePipeline&& pipeline,
-    vk::UniquePipelineLayout&& pipelineLayout,
-    vk::UniqueRenderPass&& renderPass,
-    vk::Rect2D renderArea)
-    : pipeline(std::move(pipeline))
-    , pipelineLayout(std::move(pipelineLayout))
-    , renderPass(std::move(renderPass))
-    , renderArea(renderArea)
-{
-}
-Pipeline::~Pipeline() = default;
-
-void Pipeline::reset()
-{
-    pipeline.reset();
-    pipelineLayout.reset();
-    renderPass.reset();
-}
-
-using Builder = Pipeline::Builder;
-
-Builder& Builder::usingShaderRegistry(const ShaderRegistry& registry)
+PipelineBuilder& PipelineBuilder::usingShaderRegistry(const ShaderRegistry& registry)
 {
     this->shaderRegistry = &registry;
     return *this;
 }
 
-Builder& Builder::usingConfig(const Config& config)
+PipelineBuilder& PipelineBuilder::usingConfig(const UserConfig& config)
 {
     this->config = &config;
     return *this;
 }
 
-Builder& Builder::usingDevice(vk::UniqueDevice& device)
+PipelineBuilder& PipelineBuilder::usingDevice(vk::UniqueDevice& device)
 {
     this->device = &device;
     return *this;
 }
 
-Builder& Builder::withVertexShader(const std::filesystem::path& path)
+PipelineBuilder& PipelineBuilder::withVertexShader(const std::filesystem::path& path)
 {
     this->vertexShaderPathOpt = path;
     return *this;
 }
 
-Builder& Builder::withFragmentShader(const std::filesystem::path& path)
+PipelineBuilder& PipelineBuilder::withFragmentShader(const std::filesystem::path& path)
 {
     this->fragmentShaderPathOpt = path;
     return *this;
 }
 
-Builder& Builder::withPrimitiveTopology(PrimitiveTopology topology)
+PipelineBuilder& PipelineBuilder::withPrimitiveTopology(PrimitiveTopology topology)
 {
     this->primitiveTopology = topology;
     return *this;
 }
 
-Builder& Builder::withViewport(Viewport viewport)
+PipelineBuilder& PipelineBuilder::withViewport(Viewport viewport)
 {
     this->viewport = viewport;
     return *this;
 }
 
-Builder& Builder::withRasterizerState(Rasterizer rasterizer)
+PipelineBuilder& PipelineBuilder::withRasterizerState(Rasterizer rasterizer)
 {
     this->rasterizer = rasterizer;
     return *this;
 }
 
-Builder& Builder::withMultisampleState(Multisample multisample)
+PipelineBuilder& PipelineBuilder::withMultisampleState(Multisample multisample)
 {
     this->multisample = multisample;
     return *this;
 }
 
-Builder& Builder::withBlendState(Blend blend)
+PipelineBuilder& PipelineBuilder::withBlendState(Blend blend)
 {
     this->blend = blend;
     return *this;
 }
 
-Pipeline Builder::build()
+void PipelineBuilder::build(SelectedConfig& config)
 {
     fillVertexInfo();
     fillShaderStageInfo();
@@ -127,14 +105,13 @@ Pipeline Builder::build()
         .offset = {(int32_t)vport.x, (int32_t)vport.y},
         .extent = {(uint32_t)vport.width, (uint32_t)vport.height}};
 
-    return Pipeline(
-        std::move(pipeline),
-        std::move(pipelineLayout),
-        std::move(renderPass),
-        renderArea);
+    config.pipelineConfig.pipeline = std::move(pipeline);
+    config.pipelineConfig.layout = std::move(pipelineLayout);
+    config.pipelineConfig.renderPass = std::move(renderPass);
+    config.pipelineConfig.renderArea = renderArea;
 }
 
-void Builder::fillVertexInfo()
+void PipelineBuilder::fillVertexInfo()
 {
     if(this->vertexAttributes.empty())
     {
@@ -156,7 +133,7 @@ void Builder::fillVertexInfo()
     }
 }
 
-void Builder::fillShaderStageInfo()
+void PipelineBuilder::fillShaderStageInfo()
 {
     if(vertexShaderPathOpt.has_value() && fragmentShaderPathOpt.has_value())
     {
@@ -183,7 +160,7 @@ void Builder::fillShaderStageInfo()
     assert(false);
 }
 
-void Builder::fillInputAssemblyInfo()
+void PipelineBuilder::fillInputAssemblyInfo()
 {
     if(primitiveTopology == PrimitiveTopology::TriangleList)
     {
@@ -196,7 +173,7 @@ void Builder::fillInputAssemblyInfo()
     assert(false);
 }
 
-void Builder::fillViewportInfo()
+void PipelineBuilder::fillViewportInfo()
 {
     if(viewport == Viewport::Fullscreen)
     {
@@ -223,7 +200,7 @@ void Builder::fillViewportInfo()
     assert(false);
 }
 
-void Builder::fillMultisampleInfo()
+void PipelineBuilder::fillMultisampleInfo()
 {
     if(multisample == Multisample::Disabled)
     {
@@ -240,7 +217,7 @@ void Builder::fillMultisampleInfo()
     assert(false);
 }
 
-void Builder::fillBlendInfo()
+void PipelineBuilder::fillBlendInfo()
 {
     if(blend == Blend::Disabled)
     {
@@ -268,7 +245,7 @@ void Builder::fillBlendInfo()
     assert(false);
 }
 
-void Builder::fillRasterizerInfo()
+void PipelineBuilder::fillRasterizerInfo()
 {
     if(rasterizer == Rasterizer::BackfaceCulling)
     {
@@ -289,7 +266,7 @@ void Builder::fillRasterizerInfo()
     assert(false);
 }
 
-void Builder::fillLayoutInfo()
+void PipelineBuilder::fillLayoutInfo()
 {
     layoutInfo = vk::PipelineLayoutCreateInfo{
         .setLayoutCount = 0,
@@ -299,7 +276,7 @@ void Builder::fillLayoutInfo()
     };
 }
 
-void Builder::fillRenderPassInfo()
+void PipelineBuilder::fillRenderPassInfo()
 {
     attachmentDescription = {
         .format = config->backbufferFormat,

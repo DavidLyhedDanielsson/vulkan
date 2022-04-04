@@ -1,10 +1,10 @@
 #pragma once
 
+#include "../config.h"
 #include <vulkan/vulkan.hpp>
 
 #include <functional>
 #include <optional>
-#include <variant>
 #include <vector>
 
 struct Layer
@@ -45,8 +45,6 @@ class InstanceBuilder
         };
     };
 
-    using BuildType = std::variant<vk::UniqueInstance, Error>;
-
     InstanceBuilder();
     InstanceBuilder& withApplicationVersion(
         const char* name,
@@ -62,7 +60,7 @@ class InstanceBuilder
     InstanceBuilder& withValidationLayer();
     InstanceBuilder& withDebugExtension();
 
-    BuildType build();
+    std::optional<Error> build(SelectedConfig&);
 
   private:
     vk::ApplicationInfo applicationInfo;

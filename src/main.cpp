@@ -1,18 +1,62 @@
 #include <cassert>
 #include <iostream>
+#include <variant>
 
 #include <vulkan/vulkan.h>
 
 #include "config.h"
 #include "shader_registry.h"
+#include "stl_utils.h"
 #include "vertex.h"
-#include "vulkan/buffer.h"
-#include "vulkan/pipeline.h"
-#include "vulkan/swapchain.h"
-#include "vulkan/vulkan.h"
+#include "vulkan/device_builder.h"
+#include "vulkan/instance_builder.h"
+#include "vulkan/pipeline_builder.h"
+#include "vulkan/swapchain_builder.h"
 #include "window.h"
 
 #include "shader_paths.h"
+#include "vulkan/buffer.h"
+
+#define vkGetInstanceProcAddrQ(instance, func) (PFN_##func) instance->getProcAddr(#func)
+
+// https://github.com/KhronosGroup/Vulkan-Hpp/blob/master/samples/CreateDebugUtilsMessenger/CreateDebugUtilsMessenger.cpp
+PFN_vkCreateDebugUtilsMessengerEXT pfnVkCreateDebugUtilsMessengerEXT;
+PFN_vkDestroyDebugUtilsMessengerEXT pfnVkDestroyDebugUtilsMessengerEXT;
+
+VKAPI_ATTR VkResult VKAPI_CALL vkCreateDebugUtilsMessengerEXT(
+    VkInstance instance,
+    const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkDebugUtilsMessengerEXT* pMessenger)
+{
+    return pfnVkCreateDebugUtilsMessengerEXT(instance, pCreateInfo, pAllocator, pMessenger);
+}
+
+VKAPI_ATTR void VKAPI_CALL vkDestroyDebugUtilsMessengerEXT(
+    VkInstance instance,
+    VkDebugUtilsMessengerEXT messenger,
+    VkAllocationCallbacks const* pAllocator)
+{
+    return pfnVkDestroyDebugUtilsMessengerEXT(instance, messenger, pAllocator);
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+    VkDebugUtilsMessageTypeFlagsEXT messageType,
+    const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+    void* pUserData)
+{
+    if(messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT)
+        return VK_FALSE;
+
+    // vkCreateSwapchainKHR called with invalid imageExtent
+    if(pCallbackData->messageIdNumber == 0x7cd0911d)
+        return VK_FALSE;
+
+    std::cout << pCallbackData->pMessage << std::endl;
+
+    return VK_FALSE;
+}
 
 template<typename T, typename E>
 T expectResult(std::variant<T, E> var)
@@ -25,13 +69,15 @@ int main()
 {
     glfwInit();
 
-    Config config = {
+    UserConfig config = {
         .resolutionWidth = 1280,
         .resolutionHeight = 720,
         .backbufferFormat = vk::Format::eB8G8R8A8Srgb,
         .sampleCount = vk::SampleCountFlagBits::e1,
         .backbufferCount = 3,
     };
+
+    SelectedConfig selectedConfig;
 
     //  Create window
     bool windowResized = false;
@@ -43,51 +89,127 @@ int main()
     assert(mainWindowOpt.has_value());
     std::unique_ptr<Window> mainWindow = std::move(mainWindowOpt.value());
 
-    // Create vulkan instances
-    auto vulkanVar = Vulkan::Builder(config, *mainWindow).build();
-    assert(!std::holds_alternative<Vulkan::Error>(vulkanVar));
-    auto vulkan = std::get<Vulkan>(std::move(vulkanVar));
+    uint32_t glfwExtensionCount = 0;
+    const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+    assert(!InstanceBuilder()
+                .withValidationLayer()
+                .withDebugExtension()
+                .withRequiredExtensions(glfwExtensions, glfwExtensionCount)
+                .build(selectedConfig)
+                .has_value());
+
+    {
+        pfnVkCreateDebugUtilsMessengerEXT =
+            vkGetInstanceProcAddrQ(*selectedConfig.instance, vkCreateDebugUtilsMessengerEXT);
+        assert(pfnVkCreateDebugUtilsMessengerEXT);
+
+        pfnVkDestroyDebugUtilsMessengerEXT =
+            vkGetInstanceProcAddrQ(*selectedConfig.instance, vkDestroyDebugUtilsMessengerEXT);
+        assert(pfnVkCreateDebugUtilsMessengerEXT);
+
+        vk::DebugUtilsMessengerCreateInfoEXT msgCreateInfo = {
+            .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose
+                               | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning
+                               | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+            .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral
+                           | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance
+                           | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
+            .pfnUserCallback = debugCallback,
+            .pUserData = nullptr,
+        };
+
+        auto [cdrcRes, msg] =
+            selectedConfig.instance->createDebugUtilsMessengerEXTUnique(msgCreateInfo);
+        assert(cdrcRes == vk::Result::eSuccess);
+        selectedConfig.debug.msg = std::move(msg);
+    }
+
+    {
+        VkSurfaceKHR surfaceRaw;
+        assert(
+            glfwCreateWindowSurface(
+                *selectedConfig.instance,
+                mainWindow->getWindowHandle(),
+                nullptr,
+                &surfaceRaw)
+            == VK_SUCCESS);
+        selectedConfig.surfaceConfig.surface =
+            vk::UniqueSurfaceKHR(surfaceRaw, *selectedConfig.instance);
+    }
+    auto dbRes =
+        DeviceBuilder(selectedConfig.instance, selectedConfig.surfaceConfig.surface)
+            .selectGpuWithRenderSupport(
+                [&](std::optional<vk::PhysicalDevice>,
+                    const vk::PhysicalDevice& potential) -> std::variant<bool, vk::Result> {
+                    auto capabilities =
+                        potential.getSurfaceCapabilitiesKHR(*selectedConfig.surfaceConfig.surface)
+                            .value;
+                    return config.backbufferCount >= capabilities.minImageCount
+                           && config.backbufferCount <= capabilities.maxImageCount;
+                })
+            .build(selectedConfig);
+    assert(!dbRes.has_value());
+    {
+        auto surfaceFormats = selectedConfig.physicalDevice
+                                  .getSurfaceFormatsKHR(*selectedConfig.surfaceConfig.surface)
+                                  .value;
+        auto iter =
+            std::find_if(entire_collection(surfaceFormats), [&](vk::SurfaceFormatKHR format) {
+                return format.format == config.backbufferFormat;
+            });
+
+        assert(iter != surfaceFormats.end());
+        selectedConfig.surfaceConfig.format = *iter;
+    }
+
+    {
+        selectedConfig.queues.workQueueInfo.queue =
+            selectedConfig.device->getQueue(selectedConfig.queues.workQueueInfo.index, 0);
+    }
+
+    vk::UniqueDevice& device = selectedConfig.device;
 
     // Preload shaders
     ShaderRegistry shaderRegistry;
-    assert(!shaderRegistry.loadVertexShader(vulkan.device, ShaderPaths::Simple2D).has_value());
-    assert(!shaderRegistry.loadFragmentShader(vulkan.device, ShaderPaths::ColorPassthrough)
-                .has_value());
+    assert(!shaderRegistry.loadVertexShader(device, ShaderPaths::Simple2D).has_value());
+    assert(!shaderRegistry.loadFragmentShader(device, ShaderPaths::ColorPassthrough).has_value());
 
     auto pipelineBuilder =
-        Pipeline::Builder()
+        PipelineBuilder()
             .usingConfig(config)
             .usingShaderRegistry(shaderRegistry)
-            .usingDevice(vulkan.device)
+            .usingDevice(selectedConfig.device)
             .withVertexShader(ShaderPaths::Simple2D)
             .withFragmentShader(ShaderPaths::ColorPassthrough)
-            .withPrimitiveTopology(Pipeline::Builder::PrimitiveTopology::TriangleList)
-            .withViewport(Pipeline::Builder::Viewport::Fullscreen)
-            .withRasterizerState(Pipeline::Builder::Rasterizer::BackfaceCulling)
-            .withMultisampleState(Pipeline::Builder::Multisample::Disabled)
-            .withBlendState(Pipeline::Builder::Blend::Disabled)
+            .withPrimitiveTopology(PipelineBuilder::PrimitiveTopology::TriangleList)
+            .withViewport(PipelineBuilder::Viewport::Fullscreen)
+            .withRasterizerState(PipelineBuilder::Rasterizer::BackfaceCulling)
+            .withMultisampleState(PipelineBuilder::Multisample::Disabled)
+            .withBlendState(PipelineBuilder::Blend::Disabled)
             .withLinearVertexLayout<TriangleVertex>(
                 vk::Format::eR32G32Sfloat,
                 vk::Format::eR32G32B32Sfloat);
 
-    Pipeline pipeline = pipelineBuilder.build();
+    pipelineBuilder.build(selectedConfig);
 
-    auto swapchainBuilder = Swapchain::Builder(config, vulkan.surface, vulkan.device)
-                                .withBackbufferFormat(vulkan.surfaceFormat.format)
-                                .withColorSpace(vulkan.surfaceFormat.colorSpace)
-                                .createFramebuffersFor(pipeline.renderPass);
-    auto swapchainVar = swapchainBuilder.build();
-    assert(!std::holds_alternative<Swapchain::Builder::Error>(swapchainVar));
-    auto swapchain = std::get<Swapchain>(std::move(swapchainVar));
+    auto swapchainBuilder =
+        SwapchainBuilder(config, selectedConfig.surfaceConfig.surface, selectedConfig.device)
+            .withBackbufferFormat(selectedConfig.surfaceConfig.format.format)
+            .withColorSpace(selectedConfig.surfaceConfig.format.colorSpace)
+            .createFramebuffersFor(selectedConfig.pipelineConfig.renderPass);
+
+    assert(!swapchainBuilder.build(selectedConfig.swapchainConfig));
+
     // Command buffers
 
-    auto [ccpRes, commandPool] = vulkan.device->createCommandPoolUnique({
+    auto [ccpRes, commandPool] = selectedConfig.device->createCommandPoolUnique({
         .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-        .queueFamilyIndex = vulkan.queueFamilyProperties.index,
+        .queueFamilyIndex = selectedConfig.queues.workQueueInfo.index,
     });
     assert(ccpRes == vk::Result::eSuccess);
 
-    auto [acbRes, commandBuffers] = vulkan.device->allocateCommandBuffersUnique({
+    auto [acbRes, commandBuffers] = selectedConfig.device->allocateCommandBuffersUnique({
         .commandPool = commandPool.get(),
         .level = vk::CommandBufferLevel::ePrimary,
         .commandBufferCount = 3,
@@ -100,22 +222,22 @@ int main()
     std::vector<vk::UniqueFence> fences(config.backbufferCount);
     for(uint32_t i = 0; i < config.backbufferCount; ++i)
     {
-        auto [iasRes, imageAvailable] = vulkan.device->createSemaphoreUnique({});
+        auto [iasRes, imageAvailable] = selectedConfig.device->createSemaphoreUnique({});
         assert(iasRes == vk::Result::eSuccess);
         imageAvailableList[i] = std::move(imageAvailable);
 
-        auto [rfsRes, renderFinished] = vulkan.device->createSemaphoreUnique({});
+        auto [rfsRes, renderFinished] = selectedConfig.device->createSemaphoreUnique({});
         assert(rfsRes == vk::Result::eSuccess);
         renderFinishedList[i] = std::move(renderFinished);
 
-        auto [fRes, fence] = vulkan.device->createFenceUnique({
+        auto [fRes, fence] = selectedConfig.device->createFenceUnique({
             .flags = vk::FenceCreateFlagBits::eSignaled,
         });
         assert(fRes == vk::Result::eSuccess);
         fences[i] = std::move(fence);
     }
 
-    auto memoryProperties = vulkan.physicalDeviceInfo.device.getMemoryProperties();
+    auto memoryProperties = selectedConfig.physicalDevice.getMemoryProperties();
 
     std::vector<TriangleVertex> vertices = {
         TriangleVertex{{-0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
@@ -128,35 +250,37 @@ int main()
     };
     auto verticesSize = sizeof(TriangleVertex) * vertices.size();
 
-    auto vertexBuffer = expectResult(Buffer::Builder(vulkan.device)
+    auto vertexBuffer = expectResult(Buffer::Builder(selectedConfig.device)
                                          .withVertexBufferFormat()
                                          .withTransferDestFormat(memoryProperties)
                                          .withSize(verticesSize)
                                          .build());
     assert(
-        vulkan.device->bindBufferMemory(vertexBuffer.buffer.get(), vertexBuffer.memory.get(), 0)
+        selectedConfig.device
+            ->bindBufferMemory(vertexBuffer.buffer.get(), vertexBuffer.memory.get(), 0)
         == vk::Result::eSuccess);
 
     {
-        auto srcBuffer = expectResult(Buffer::Builder(vulkan.device)
+        auto srcBuffer = expectResult(Buffer::Builder(selectedConfig.device)
                                           .withSize(verticesSize)
                                           .withMapFunctionality(memoryProperties)
                                           .withTransferSourceFormat(memoryProperties)
                                           .build());
 
         assert(
-            vulkan.device->bindBufferMemory(srcBuffer.buffer.get(), srcBuffer.memory.get(), 0)
+            selectedConfig.device
+                ->bindBufferMemory(srcBuffer.buffer.get(), srcBuffer.memory.get(), 0)
             == vk::Result::eSuccess);
 
         void* data;
         assert(
-            vulkan.device
+            selectedConfig.device
                 ->mapMemory(srcBuffer.memory.get(), 0, VK_WHOLE_SIZE, vk::MemoryMapFlags(), &data)
             == vk::Result::eSuccess);
         std::memcpy(data, vertices.data(), verticesSize);
-        vulkan.device->unmapMemory(srcBuffer.memory.get());
+        selectedConfig.device->unmapMemory(srcBuffer.memory.get());
 
-        auto [acb2Res, copyBuffer] = vulkan.device->allocateCommandBuffersUnique({
+        auto [acb2Res, copyBuffer] = selectedConfig.device->allocateCommandBuffersUnique({
             .commandPool = commandPool.get(),
             .level = vk::CommandBufferLevel::ePrimary,
             .commandBufferCount = 1,
@@ -177,9 +301,11 @@ int main()
             .commandBufferCount = 1,
             .pCommandBuffers = &copyBuffer[0].get(),
         };
-        assert(vulkan.workQueue.submit(1, &submitInfo, VK_NULL_HANDLE) == vk::Result::eSuccess);
+        assert(
+            selectedConfig.queues.workQueueInfo.queue.submit(1, &submitInfo, VK_NULL_HANDLE)
+            == vk::Result::eSuccess);
 
-        assert(vulkan.workQueue.waitIdle() == vk::Result::eSuccess);
+        assert(selectedConfig.queues.workQueueInfo.queue.waitIdle() == vk::Result::eSuccess);
     }
 
     bool recreateSwapchain = false;
@@ -191,18 +317,18 @@ int main()
 
         if(windowResized || recreateSwapchain)
         {
-            assert(vulkan.device->waitIdle() == vk::Result::eSuccess);
+            assert(selectedConfig.device->waitIdle() == vk::Result::eSuccess);
 
             // The GLFW window size and the surface capabilities extents tend to not match, so let's
             // not even do that
-            auto val =
-                vulkan.physicalDeviceInfo.device.getSurfaceCapabilitiesKHR(vulkan.surface.get())
-                    .value;
+            auto val = selectedConfig.physicalDevice
+                           .getSurfaceCapabilitiesKHR(*selectedConfig.surfaceConfig.surface)
+                           .value;
 
-            int clampedWidth = std::max(
+            auto clampedWidth = std::max(
                 val.minImageExtent.width,
                 std::min(val.maxImageExtent.width, config.resolutionWidth));
-            int clampedHeight = std::max(
+            auto clampedHeight = std::max(
                 val.minImageExtent.height,
                 std::min(val.maxImageExtent.height, config.resolutionHeight));
 
@@ -226,21 +352,22 @@ int main()
 
             windowResized = false;
 
-            swapchain.reset();
-            pipeline.reset();
+            selectedConfig.pipelineConfig = {};
+            selectedConfig.swapchainConfig = {};
 
-            pipeline = pipelineBuilder.build();
-            swapchainBuilder.createFramebuffersFor(pipeline.renderPass);
-            auto swapchainVar = swapchainBuilder.build();
-            assert(std::holds_alternative<Swapchain>(swapchainVar));
-            swapchain = std::move(std::get<Swapchain>(swapchainVar));
+            pipelineBuilder.build(selectedConfig);
+            swapchainBuilder.createFramebuffersFor(selectedConfig.pipelineConfig.renderPass);
+
+            assert(!swapchainBuilder.build(selectedConfig.swapchainConfig));
+
             recreateSwapchain = false;
 
             // The swapchain might already be invalid if the window is still being resized
             continue;
         }
 
-        auto wffRes = vulkan.device->waitForFences(fences[backbufferFrame].get(), true, UINT64_MAX);
+        auto wffRes =
+            selectedConfig.device->waitForFences(fences[backbufferFrame].get(), true, UINT64_MAX);
         assert(wffRes == vk::Result::eSuccess);
 
 #define handleRetError(Fun)                                                            \
@@ -270,14 +397,14 @@ int main()
         }                                                                                  \
     }
 
-        auto [acnRes, swapchainImageIndex] = vulkan.device->acquireNextImageKHR(
-            swapchain.swapchain.get(),
+        auto [acnRes, swapchainImageIndex] = selectedConfig.device->acquireNextImageKHR(
+            *selectedConfig.swapchainConfig.swapchain,
             UINT64_MAX,
             imageAvailableList[backbufferFrame].get(),
             VK_NULL_HANDLE);
         handleError(acnRes);
 
-        vulkan.device->resetFences(fences[backbufferFrame].get());
+        selectedConfig.device->resetFences(fences[backbufferFrame].get());
 
         auto& commandBuffer = commandBuffers[backbufferFrame];
         commandBuffer->reset();
@@ -287,14 +414,17 @@ int main()
         vk::ClearValue clearValue = {std::array<float, 4>({0.0f, 0.0f, 0.0f, 1.0f})};
         commandBuffer->beginRenderPass(
             {
-                .renderPass = pipeline.renderPass.get(),
-                .framebuffer = swapchain.framebuffers[swapchainImageIndex].get(),
-                .renderArea = pipeline.renderArea,
+                .renderPass = selectedConfig.pipelineConfig.renderPass.get(),
+                .framebuffer =
+                    selectedConfig.swapchainConfig.framebuffers[swapchainImageIndex].get(),
+                .renderArea = selectedConfig.pipelineConfig.renderArea,
                 .clearValueCount = 1,
                 .pClearValues = &clearValue,
             },
             vk::SubpassContents::eInline);
-        commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.pipeline.get());
+        commandBuffer->bindPipeline(
+            vk::PipelineBindPoint::eGraphics,
+            *selectedConfig.pipelineConfig.pipeline);
         vk::DeviceSize offset = 0;
         commandBuffer->bindVertexBuffers(0, 1, &vertexBuffer.buffer.get(), &offset);
         commandBuffer->draw(vertices.size(), 1, 0, 0);
@@ -305,7 +435,7 @@ int main()
             vk::PipelineStageFlagBits::eColorAttachmentOutput,
         };
         assert(
-            vulkan.workQueue.submit(
+            selectedConfig.queues.workQueueInfo.queue.submit(
                 {{
                     .waitSemaphoreCount = 1,
                     .pWaitSemaphores = &imageAvailableList[backbufferFrame].get(),
@@ -322,18 +452,18 @@ int main()
             .waitSemaphoreCount = 1,
             .pWaitSemaphores = &renderFinishedList[backbufferFrame].get(),
             .swapchainCount = 1,
-            .pSwapchains = &swapchain.swapchain.get(),
+            .pSwapchains = &selectedConfig.swapchainConfig.swapchain.get(),
             .pImageIndices = &swapchainImageIndex,
             .pResults = nullptr,
         };
 
-        handleRetError(vulkan.workQueue.presentKHR(presentInfo));
+        handleRetError(selectedConfig.queues.workQueueInfo.queue.presentKHR(presentInfo));
 
         frame++;
         backbufferFrame = frame % config.backbufferCount;
     }
 
-    assert(vulkan.device->waitIdle() == vk::Result::eSuccess);
+    assert(selectedConfig.device->waitIdle() == vk::Result::eSuccess);
 
     glfwTerminate();
     return 0;

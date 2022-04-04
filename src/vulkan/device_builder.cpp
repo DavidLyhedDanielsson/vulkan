@@ -1,4 +1,6 @@
+
 #include "device_builder.h"
+#include <utility>
 
 #include "../stl_utils.h"
 
@@ -11,12 +13,12 @@ struct ValidatedExtension
 
 vk::Result visitExtensionProperties(
     vk::PhysicalDevice physicalDevice,
-    std::function<void(vk::ExtensionProperties)> visitor)
+    const std::function<void(vk::ExtensionProperties)>& visitor)
 {
-    auto [res, properties] = physicalDevice.enumerateDeviceExtensionProperties();
+    auto [edepRes, properties] = physicalDevice.enumerateDeviceExtensionProperties();
 
-    if(res != vk::Result::eSuccess)
-        return res;
+    if(edepRes != vk::Result::eSuccess)
+        return edepRes;
 
     for(auto property : properties)
         visitor(property);
@@ -35,7 +37,7 @@ DeviceBuilder::DeviceBuilder(
 DeviceBuilder& DeviceBuilder::selectDevice(DeviceSelector selector)
 {
     assert(!this->gpuSelector); // TOOD: Error handling
-    this->deviceSelector = selector;
+    this->deviceSelector = std::move(selector);
     return *this;
 }
 
@@ -43,13 +45,13 @@ DeviceBuilder& DeviceBuilder::selectGpuWithRenderSupport(
     DeviceBuilder::DeviceSelectorAfterFiltering selector)
 {
     assert(!this->deviceSelector); // TOOD: Error handling
-    this->gpuSelector = selector;
+    this->gpuSelector = std::move(selector);
     return *this;
 }
 
 DeviceBuilder& DeviceBuilder::selectQueueFamily(QueueFamilySelector selector)
 {
-    this->queueFamilySelector = selector;
+    this->queueFamilySelector = std::move(selector);
     return *this;
 }
 
@@ -59,25 +61,27 @@ DeviceBuilder& DeviceBuilder::withRequiredExtension(const char* name)
     return *this;
 }
 
-DeviceBuilder::BuildType DeviceBuilder::build()
+std::optional<DeviceBuilder::Error> DeviceBuilder::build(SelectedConfig& config)
 {
     Error error = {};
 
     // Always require swap chain support, whether using a custom selector or not
     requiredExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
+    std::optional<vk::PhysicalDevice> physicalDeviceOpt;
     {
-        auto [res, physicalDevices] = instance->enumeratePhysicalDevices();
-        if(res != vk::Result::eSuccess)
+        auto [epdRes, physicalDevices] = instance->enumeratePhysicalDevices();
+        if(epdRes != vk::Result::eSuccess)
         {
             error.type = ErrorType::EnumeratePhysicalDevices;
-            error.EnumeratePhysicalDevices.result = res;
+            error.EnumeratePhysicalDevices.result = epdRes;
             return error;
         }
 
-        for(auto device : physicalDevices)
+        for(auto physicalDevice : physicalDevices)
         {
-            auto [depRes, extensionProperties] = device.enumerateDeviceExtensionProperties();
+            auto [depRes, extensionProperties] =
+                physicalDevice.enumerateDeviceExtensionProperties();
             if(depRes != vk::Result::eSuccess)
             {
                 error.type = ErrorType::EnumeratePhysicalDevices;
@@ -85,46 +89,11 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 return error;
             }
 
-            auto [sfRes, surfaceFormats] = device.getSurfaceFormatsKHR(surface.get());
-            if(sfRes != vk::Result::eSuccess)
-            {
-                error.type = ErrorType::NoSurfaceFormatFound;
-                error.NoSurfaceFormatFound.result = sfRes;
-                return error;
-            }
-
-            auto [pmRes, presentModes] = device.getSurfacePresentModesKHR(surface.get());
-            if(pmRes != vk::Result::eSuccess)
-            {
-                error.type = ErrorType::NoPresentModeFound;
-                error.NoPresentModeFound.result = pmRes;
-                return error;
-            }
-
-            auto [scRes, surfaceCapabilities] = device.getSurfaceCapabilitiesKHR(surface.get());
-            if(scRes != vk::Result::eSuccess)
-            {
-                error.type = ErrorType::NoSurfaceCapabilitiesFound;
-                error.NoSurfaceCapabilitiesFound.result = scRes;
-                return error;
-            }
-
-            PhysicalDeviceInfo deviceInfo = {
-                .device = device,
-                .properties = device.getProperties(),
-                .features = device.getFeatures(),
-                .surfaceCapabilities = surfaceCapabilities,
-                .queueFamilyProperties = device.getQueueFamilyProperties(),
-                .extensionProperties = extensionProperties,
-                .surfaceFormats = surfaceFormats,
-                .presentModes = presentModes,
-            };
-
             bool hasSwapchainSupport = false;
             visitExtensionProperties(
-                deviceInfo.device,
-                [&deviceInfo, &hasSwapchainSupport](vk::ExtensionProperties prop) {
-                    deviceInfo.extensionProperties.push_back(prop);
+                physicalDevice,
+                [&hasSwapchainSupport](vk::ExtensionProperties prop) {
+                    // deviceInfo.extensionProperties.push_back(prop);
                     if(std::strcmp(prop.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
                         hasSwapchainSupport = true;
                 });
@@ -134,7 +103,7 @@ DeviceBuilder::BuildType DeviceBuilder::build()
 
             if(deviceSelector)
             {
-                auto resultVar = deviceSelector(deviceOpt, deviceInfo);
+                auto resultVar = deviceSelector(physicalDeviceOpt, physicalDevice);
                 if(std::holds_alternative<vk::Result>(resultVar))
                 {
                     error.type = ErrorType::Fatal;
@@ -144,28 +113,29 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 }
                 if(std::get<bool>(resultVar))
                 {
-                    deviceOpt = deviceInfo;
+                    physicalDeviceOpt = physicalDevice;
                 }
             }
             else
             {
+                auto properties = physicalDevice.getProperties();
                 // Default selector selects any discrete GPU over any integrated GPU, but requires
                 // presentation support and VK_KHR_SWAPCHAIN_EXTENSION
-                bool hasDiscrete = deviceOpt.has_value()
-                                   && deviceOpt.value().properties.deviceType
-                                          == vk::PhysicalDeviceType::eDiscreteGpu;
+                bool hasDiscrete = physicalDeviceOpt.has_value()
+                                   && properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu;
 
                 vk::Bool32 supportPresent = false;
-                for(auto [queueFamilyInfo, index] : Index(deviceInfo.queueFamilyProperties))
+                for(auto [queueFamilyInfo, index] :
+                    Index(std::move(physicalDevice.getQueueFamilyProperties())))
                 {
-                    auto [res, support] =
-                        deviceInfo.device.getSurfaceSupportKHR(index, surface.get());
+                    auto [gssRes, support] =
+                        physicalDevice.getSurfaceSupportKHR(index, surface.get());
                     supportPresent = support;
 
-                    if(res != vk::Result::eSuccess)
+                    if(gssRes != vk::Result::eSuccess)
                     {
                         error.type = ErrorType::Fatal;
-                        error.Fatal.result = res;
+                        error.Fatal.result = gssRes;
                         error.Fatal.message = "Error during device selection";
                         return error;
                     }
@@ -182,9 +152,9 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                     });
 
                 visitExtensionProperties(
-                    deviceInfo.device,
+                    physicalDevice,
                     [&validatedExtensions](vk::ExtensionProperties prop) {
-                        for(auto [extension, index] : Index(validatedExtensions))
+                        for(auto [extension, index] : IndexRef(validatedExtensions))
                         {
                             if(std::strcmp(extension.name, prop.extensionName) == 0)
                             {
@@ -205,14 +175,13 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 }
 
                 if(!hasDiscrete
-                   && (deviceInfo.properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu
-                       || deviceInfo.properties.deviceType
-                              == vk::PhysicalDeviceType::eIntegratedGpu)
+                   && (properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu
+                       || properties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu)
                    && supportPresent && hasRequiredExtensions)
                 {
                     if(gpuSelector)
                     {
-                        auto resultVar = gpuSelector(deviceOpt, deviceInfo);
+                        auto resultVar = gpuSelector(physicalDeviceOpt, physicalDevice);
                         if(std::holds_alternative<vk::Result>(resultVar))
                         {
                             error.type = ErrorType::Fatal;
@@ -222,32 +191,32 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                         }
                         if(std::get<bool>(resultVar))
                         {
-                            deviceOpt = deviceInfo;
+                            physicalDeviceOpt = physicalDevice;
                         }
                     }
                     else
                     {
-                        deviceOpt = deviceInfo;
+                        physicalDeviceOpt = physicalDevice;
                     }
                 }
             }
         }
     }
 
-    if(!deviceOpt.has_value())
+    if(!physicalDeviceOpt.has_value())
     {
         error.type = ErrorType::NoPhysicalDeviceFound;
         return error;
     }
-    PhysicalDeviceInfo physicalDeviceInfo = deviceOpt.value();
+    vk::PhysicalDevice physicalDevice = physicalDeviceOpt.value();
 
-    for(auto [prop, index] : Index(physicalDeviceInfo.queueFamilyProperties))
+    uint32_t queueFamilyPropertiesIndex = 0; // Only valid if queueFamilyPropertiesOpt holds a value
+    std::optional<vk::QueueFamilyProperties> queueFamilyPropertiesOpt;
+    for(auto [prop, index] : Index(physicalDevice.getQueueFamilyProperties()))
     {
-        QueueFamilyInfo info = {.index = (uint32_t)index, .properties = prop};
-
         if(queueFamilySelector)
         {
-            auto resultVar = queueFamilySelector(this->queueFamilyPropertiesOpt, info);
+            auto resultVar = queueFamilySelector(queueFamilyPropertiesOpt, prop);
             if(std::holds_alternative<vk::Result>(resultVar))
             {
                 error.type = ErrorType::Fatal;
@@ -256,7 +225,8 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 return error;
             }
 
-            this->queueFamilyPropertiesOpt = info;
+            queueFamilyPropertiesOpt = prop;
+            queueFamilyPropertiesIndex = index;
         }
         else
         {
@@ -265,13 +235,13 @@ DeviceBuilder::BuildType DeviceBuilder::build()
             if(!queueFamilyPropertiesOpt.has_value()
                && prop.queueFlags & vk::QueueFlagBits::eGraphics)
             {
-                auto [res, supportPresent] =
-                    physicalDeviceInfo.device.getSurfaceSupportKHR(index, surface.get());
+                auto [gssRes, supportPresent] =
+                    physicalDevice.getSurfaceSupportKHR(index, surface.get());
 
-                if(res != vk::Result::eSuccess)
+                if(gssRes != vk::Result::eSuccess)
                 {
                     error.type = ErrorType::Fatal;
-                    error.Fatal.result = res;
+                    error.Fatal.result = gssRes;
                     error.Fatal.message = "Error during queue family selection";
                     return error;
                 }
@@ -279,7 +249,8 @@ DeviceBuilder::BuildType DeviceBuilder::build()
                 if(!supportPresent)
                     continue;
 
-                this->queueFamilyPropertiesOpt = info;
+                queueFamilyPropertiesOpt = prop;
+                queueFamilyPropertiesIndex = index;
             }
         }
     }
@@ -293,7 +264,7 @@ DeviceBuilder::BuildType DeviceBuilder::build()
 
     float queuePriority = 1.0f;
     vk::DeviceQueueCreateInfo queueInfo = {
-        .queueFamilyIndex = queueFamilyProperties.index,
+        .queueFamilyIndex = queueFamilyPropertiesIndex,
         .queueCount = 1,
         .pQueuePriorities = &queuePriority,
     };
@@ -308,7 +279,7 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         .pEnabledFeatures = nullptr,
     };
 
-    auto [cdRes, device] = physicalDeviceInfo.device.createDeviceUnique(deviceCreateInfo);
+    auto [cdRes, device] = physicalDevice.createDeviceUnique(deviceCreateInfo);
     if(cdRes != vk::Result::eSuccess)
     {
         error.type = ErrorType::DeviceCreationError;
@@ -316,9 +287,10 @@ DeviceBuilder::BuildType DeviceBuilder::build()
         return error;
     }
 
-    return Data{
-        .device = std::move(device),
-        .physicalDeviceInfo = physicalDeviceInfo,
-        .queueFamilyProperties = queueFamilyProperties,
-    };
+    config.device = std::move(device);
+    config.queues.workQueueInfo.index = queueFamilyPropertiesIndex;
+    config.queues.workQueueInfo.properties = queueFamilyProperties;
+    config.physicalDevice = physicalDevice;
+
+    return std::nullopt;
 }

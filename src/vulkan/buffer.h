@@ -53,7 +53,6 @@ struct Buffer
         Self& withTransferSourceFormat(const vk::PhysicalDeviceMemoryProperties&);
         Self& withTransferDestFormat(const vk::PhysicalDeviceMemoryProperties&);
         Self& withMapFunctionality(const vk::PhysicalDeviceMemoryProperties&);
-        Self& withMemoryTypeSelector(const MemoryTypeSelector&);
 
         std::variant<Buffer, Error> build() const;
 
@@ -61,10 +60,8 @@ struct Buffer
         const vk::UniqueDevice& device;
 
         bool mapFunctionality;
-        bool transferFunctionality;
 
         vk::BufferCreateInfo bufferInfo;
-        MemoryTypeSelector memoryTypeSelector;
         vk::PhysicalDeviceMemoryProperties memoryProperties;
     };
 

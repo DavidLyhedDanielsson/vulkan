@@ -1,9 +1,9 @@
-#include "swapchain.h"
+#include "swapchain_builder.h"
 
-using Builder = Swapchain::Builder;
+using Self = SwapchainBuilder;
 
-Swapchain::Builder::Builder(
-    const Config& config,
+SwapchainBuilder::SwapchainBuilder(
+    const UserConfig& config,
     const vk::UniqueSurfaceKHR& surface,
     const vk::UniqueDevice& device)
     : config(config)
@@ -12,7 +12,8 @@ Swapchain::Builder::Builder(
 {
 }
 
-Builder::BuildType Swapchain::Builder::build()
+std::optional<SwapchainBuilder::Error> SwapchainBuilder::build(
+    SelectedConfig::SwapChain& swapChainData)
 {
     Error error;
 
@@ -43,7 +44,7 @@ Builder::BuildType Swapchain::Builder::build()
         return error;
     }
 
-    auto [gsiRes, swapchainImages] = device->getSwapchainImagesKHR(swapchain.get());
+    auto [gsiRes, images] = device->getSwapchainImagesKHR(swapchain.get());
     if(gsiRes != vk::Result::eSuccess)
     {
         error.type = ErrorType::OutOfMemory;
@@ -52,9 +53,9 @@ Builder::BuildType Swapchain::Builder::build()
         return error;
     }
 
-    std::vector<vk::UniqueImageView> swapchainImageViews;
-    swapchainImageViews.reserve(swapchainImages.size());
-    for(vk::Image image : swapchainImages)
+    std::vector<vk::UniqueImageView> imageViews;
+    imageViews.reserve(images.size());
+    for(vk::Image image : images)
     {
         vk::ImageViewCreateInfo imageCreateInfo = {
             .image = image,
@@ -86,13 +87,13 @@ Builder::BuildType Swapchain::Builder::build()
             return error;
         }
 
-        swapchainImageViews.push_back(std::move(imageViewRaw));
+        imageViews.push_back(std::move(imageViewRaw));
     }
 
     std::vector<vk::UniqueFramebuffer> framebuffers;
     if(this->renderPass.has_value())
     {
-        for(const auto& swapchainImageView : swapchainImageViews)
+        for(const auto& swapchainImageView : imageViews)
         {
             vk::FramebufferCreateInfo framebufferCreateInfo = {
                 .renderPass = this->renderPass.value()->get(),
@@ -109,55 +110,34 @@ Builder::BuildType Swapchain::Builder::build()
         }
     }
 
-    Swapchain s(
-        std::move(swapchain),
-        std::move(swapchainImages),
-        std::move(swapchainImageViews),
-        std::move(framebuffers));
+    swapChainData.swapchain = std::move(swapchain);
+    swapChainData.images = std::move(images);
+    swapChainData.imageViews = std::move(imageViews);
+    swapChainData.framebuffers = std::move(framebuffers);
 
-    return std::variant<Swapchain, Error>(std::move(s));
+    return std::nullopt;
 }
 
-Builder::Self Swapchain::Builder::withBackbufferFormat(vk::Format format)
+Self SwapchainBuilder::withBackbufferFormat(vk::Format format)
 {
     this->backbufferFormat = format;
     return *this;
 }
 
-Builder::Self Swapchain::Builder::withColorSpace(vk::ColorSpaceKHR colorSpace)
+Self SwapchainBuilder::withColorSpace(vk::ColorSpaceKHR colorSpace)
 {
     this->backbufferColorSpace = colorSpace;
     return *this;
 }
 
-Builder::Self Swapchain::Builder::withPresentMode(vk::PresentModeKHR presentMode)
+Self SwapchainBuilder::withPresentMode(vk::PresentModeKHR presentMode)
 {
     this->presentMode = presentMode;
     return *this;
 }
 
-Builder::Self Swapchain::Builder::createFramebuffersFor(vk::UniqueRenderPass& renderPass)
+Self SwapchainBuilder::createFramebuffersFor(vk::UniqueRenderPass& renderPass)
 {
     this->renderPass = &renderPass;
     return *this;
-}
-
-Swapchain::Swapchain(
-    vk::UniqueSwapchainKHR swapChain,
-    std::vector<vk::Image> swapChainImages,
-    std::vector<vk::UniqueImageView> swapchainImageViews,
-    std::vector<vk::UniqueFramebuffer> framebuffers)
-    : swapchain(std::move(swapChain))
-    , swapchainImages(std::move(swapChainImages))
-    , swapchainImageViews(std::move(swapchainImageViews))
-    , framebuffers(std::move(framebuffers))
-{
-}
-
-void Swapchain::reset()
-{
-    framebuffers.clear();
-    swapchainImageViews.clear();
-    swapchainImages.clear();
-    swapchain.reset();
 }

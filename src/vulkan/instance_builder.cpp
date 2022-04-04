@@ -1,6 +1,7 @@
 #include "instance_builder.h"
 
 #include "../stl_utils.h"
+#include <variant>
 
 struct ValidatedLayer
 {
@@ -9,7 +10,7 @@ struct ValidatedLayer
     bool found;
 };
 
-vk::Result visitValidationLayers(std::function<void(vk::LayerProperties)> visitor)
+vk::Result visitValidationLayers(const std::function<void(vk::LayerProperties)>& visitor)
 {
     auto [res, layers] = vk::enumerateInstanceLayerProperties();
     if(res != vk::Result::eSuccess)
@@ -29,7 +30,7 @@ std::variant<std::vector<ValidatedLayer>, vk::Result> validateLayers(
     });
 
     auto result = visitValidationLayers([&validatedLayers, layers](vk::LayerProperties prop) {
-        for(auto [layer, index] : Index(layers))
+        for(auto [layer, index] : IndexRef(layers))
         {
             if(std::strcmp(layer.name, prop.layerName) == 0)
             {
@@ -115,7 +116,7 @@ InstanceBuilder& InstanceBuilder::withDebugExtension()
     return *this;
 }
 
-InstanceBuilder::BuildType InstanceBuilder::build()
+std::optional<InstanceBuilder::Error> InstanceBuilder::build(SelectedConfig& config)
 {
     // Some errors require multiple iterations in loops and such, so declare it here
     Error error = {};
@@ -126,7 +127,7 @@ InstanceBuilder::BuildType InstanceBuilder::build()
         error.type = ErrorType::EnumerateInstanceLayerProperties;
         error.EnumerateInstanceLayerProperties.result = std::get<vk::Result>(validatedLayersVar);
         return error;
-    };
+    }
 
     auto validatedLayers = std::get<std::vector<ValidatedLayer>>(validatedLayersVar);
     for(const ValidatedLayer& layer : validatedLayers)
@@ -138,7 +139,7 @@ InstanceBuilder::BuildType InstanceBuilder::build()
         }
     }
     if(error.type != ErrorType::None)
-        return BuildType(error);
+        return error;
 
     std::vector<const char*> layerNames =
         map(layers, [](const Layer& layer) { return layer.name; });
@@ -152,12 +153,14 @@ InstanceBuilder::BuildType InstanceBuilder::build()
     };
 
     auto [res, instance] = vk::createInstanceUnique(instanceCreateInfo);
-    if(res == vk::Result::eSuccess)
-        return BuildType(std::move(instance));
-    else
+    if(res != vk::Result::eSuccess)
     {
         error.type = ErrorType::InstanceCreationError;
         error.InstanceCreationError.result = res;
-        return BuildType(error);
+        return error;
     }
+
+    config.instance = std::move(instance);
+
+    return std::nullopt;
 }

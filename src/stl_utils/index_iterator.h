@@ -14,11 +14,11 @@ class IndexIterator
   public:
     IndexIterator(const typename T::const_iterator& lhs, size_t index): lhs(lhs), index(index) {}
 
-    bool operator==(const iter& other)
+    bool operator==(const iter& other) const
     {
         return index == other.index;
     }
-    bool operator!=(const iter& other)
+    bool operator!=(const iter& other) const
     {
         return !(*this == other);
     }
@@ -58,7 +58,25 @@ template<typename T>
 struct Index
 {
     // I'm not a huge fan of the name `Index` but it's alright for now
-    Index(const T& lhs): lhs(lhs) {}
+    explicit Index(T lhs): lhs(lhs) {}
+
+    auto begin() const
+    {
+        return IndexIterator<T>(lhs.begin(), 0);
+    }
+    auto end() const
+    {
+        return IndexIterator<T>(lhs.end(), lhs.size());
+    }
+
+  private:
+    T lhs;
+};
+
+template<typename T>
+struct IndexRef
+{
+    explicit IndexRef(const T& lhs): lhs(lhs) {}
 
     auto begin() const
     {

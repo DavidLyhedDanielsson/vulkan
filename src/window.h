@@ -7,11 +7,10 @@
 
 class Window
 {
-    friend std::optional<Window> createWindow(int, int, const char*);
     friend void glfwResizeCallback(GLFWwindow* glfwWindow, int width, int height);
 
   public:
-    ~Window();
+    ~Window() = default;
     Window(Window&&) = default;
 
     static std::optional<std::unique_ptr<Window>> createWindow(
@@ -31,6 +30,4 @@ class Window
 
     std::unique_ptr<GLFWwindow, decltype(&glfwDestroyWindow)> glfwWindow;
     std::function<void(uint32_t width, uint32_t height)> resizeCallback;
-
-    static void glfwResizeCallback(GLFWwindow* glfwWindow, int width, int height);
 };

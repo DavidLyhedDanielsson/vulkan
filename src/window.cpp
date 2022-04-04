@@ -1,9 +1,10 @@
 #include "window.h"
 #include <cassert>
+#include <utility>
 
-void Window::glfwResizeCallback(GLFWwindow* glfwWindow, int width, int height)
+void glfwResizeCallback(GLFWwindow* glfwWindow, int width, int height)
 {
-    Window* window = (Window*)glfwGetWindowUserPointer(glfwWindow);
+    auto window = (Window*)glfwGetWindowUserPointer(glfwWindow);
     window->resizeCallback((uint32_t)width, (uint32_t)height);
 }
 
@@ -19,7 +20,7 @@ std::optional<std::unique_ptr<Window>> Window::createWindow(
 
     auto window = std::make_unique<Window>(Window(glfwWindow, std::move(resizeCallback)));
     glfwSetWindowUserPointer(window->glfwWindow.get(), window.get());
-    glfwSetFramebufferSizeCallback(window->glfwWindow.get(), Window::glfwResizeCallback);
+    glfwSetFramebufferSizeCallback(window->glfwWindow.get(), glfwResizeCallback);
 
     if(glfwWindow)
         return window;
@@ -31,11 +32,9 @@ Window::Window(
     GLFWwindow* window,
     std::function<void(uint32_t width, uint32_t height)> resizeCallback)
     : glfwWindow(window, glfwDestroyWindow)
-    , resizeCallback(resizeCallback)
+    , resizeCallback(std::move(resizeCallback))
 {
 }
-
-Window::~Window() {}
 
 void Window::pollEvents()
 {
